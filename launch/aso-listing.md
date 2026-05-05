@@ -1,4 +1,4 @@
-# CampusClip — App Store Listing Copy
+# CampusClip — App Store & Google Play Listing Copy
 
 *Launch: August 2026 — Western University*
 *Target: 19-year-old Canadian university student*
