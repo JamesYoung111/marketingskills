@@ -1,511 +1,613 @@
 """
-CampusClip Social Media Post Generator
-Generates Instagram-ready 1080x1080 PNG images for each post.
+CampusClip Social Media Post Generator v2
+Professional-grade 1080x1080 Instagram posts.
 """
 
 from PIL import Image, ImageDraw, ImageFont
 import os
-import textwrap
+import random
 
-# ── Paths ──────────────────────────────────────────────────────────────────
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "posts")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_BOLD    = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+FONT_REGULAR = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
-# ── Brand colours ──────────────────────────────────────────────────────────
-BG_LIGHT    = "#F5F3EE"   # warm off-white
-BG_DARK     = "#1A1A2E"   # deep navy (for launch / countdown posts)
-BG_PURPLE   = "#5B5EA6"   # CampusClip brand purple
-ACCENT      = "#6C63FF"   # vivid purple accent
-TEXT_DARK   = "#1A1A2E"
-TEXT_LIGHT  = "#FFFFFF"
-TEXT_MUTED  = "#6B7280"
-CHIP_BG     = "#EEF2FF"
-CHIP_TEXT   = "#4F46E5"
+# Brand palette
+CREAM   = "#F7F4EF"
+NAVY    = "#0D1117"
+PURPLE  = "#6C63FF"
+PURPLE2 = "#8B85FF"
+PURPLE3 = "#4B44CC"
+WHITE   = "#FFFFFF"
+CHARCOAL= "#1C1C2E"
+SLATE   = "#64748B"
+MUTED   = "#94A3B8"
 
-W, H = 1080, 1080
+W, H   = 1080, 1080
+PAD    = 88
 
-# ── Helpers ────────────────────────────────────────────────────────────────
 
-def load_font(path, size):
+# ── Utilities ────────────────────────────────────────────────────────────────
+
+def hex_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def font(path, size):
     try:
         return ImageFont.truetype(path, size)
-    except:
+    except Exception:
         return ImageFont.load_default()
 
-def draw_rounded_rect(draw, xy, radius, fill):
-    x0, y0, x1, y1 = xy
-    draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill)
-
-def wrap_text(text, font, max_width, draw):
+def wrap(text, fnt, max_w, draw):
     words = text.split()
-    lines = []
-    current = ""
-    for word in words:
-        test = (current + " " + word).strip()
-        bbox = draw.textbbox((0, 0), test, font=font)
-        if bbox[2] <= max_width:
-            current = test
+    lines, cur = [], ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if draw.textbbox((0, 0), test, font=fnt)[2] <= max_w:
+            cur = test
         else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
     return lines
 
-def draw_logo_badge(draw, img, x, y, size=56):
-    """Draw a simple CampusClip logo badge (purple rounded square + CC text)."""
-    badge_w, badge_h = size, size
-    draw_rounded_rect(draw, [x, y, x+badge_w, y+badge_h], radius=14, fill=ACCENT)
-    font = load_font(FONT_BOLD, size // 3)
-    draw.text((x + size//2, y + size//2), "CC", font=font, fill=TEXT_LIGHT, anchor="mm")
+def circle(base, cx, cy, r, color, alpha):
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d  = ImageDraw.Draw(ov)
+    rc, gc, bc = hex_rgb(color)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(rc, gc, bc, alpha))
+    return Image.alpha_composite(base.convert("RGBA"), ov).convert("RGB")
 
-def draw_wordmark(draw, x, y, size=32):
-    """Draw 'CampusClip' wordmark next to badge."""
-    font = load_font(FONT_BOLD, size)
-    draw.text((x, y), "CampusClip", font=font, fill=ACCENT, anchor="lm")
+def ring(base, cx, cy, r, color, alpha, width=4):
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d  = ImageDraw.Draw(ov)
+    rc, gc, bc = hex_rgb(color)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r],
+              outline=(rc, gc, bc, alpha), width=width)
+    return Image.alpha_composite(base.convert("RGBA"), ov).convert("RGB")
 
-def add_branding(draw, img, theme="light", bottom=True):
-    """Add logo + wordmark to image."""
-    if bottom:
-        bx, by = 60, H - 90
-    else:
-        bx, by = 60, 48
-    text_color = TEXT_LIGHT if theme == "dark" else TEXT_DARK
-    draw_rounded_rect(draw, [bx - 12, by - 12, bx + 56 + 180, by + 68], radius=12,
-                      fill=("#ffffff22" if theme == "dark" else "#00000010"))
-    draw_logo_badge(draw, img, bx, by, size=56)
-    wm_font = load_font(FONT_BOLD, 28)
-    draw.text((bx + 68, by + 28), "CampusClip", font=wm_font, fill=ACCENT, anchor="lm")
-
-def add_tag(draw, text, x, y, bg=CHIP_BG, fg=CHIP_TEXT):
-    font = load_font(FONT_BOLD, 24)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    pad = 20
-    draw_rounded_rect(draw, [x, y, x + tw + pad*2, y + 44], radius=22, fill=bg)
-    draw.text((x + pad, y + 22), text, font=font, fill=fg, anchor="lm")
-
-# ── Gradient background helper ─────────────────────────────────────────────
-
-def make_gradient_bg(color_top, color_bottom):
+def gradient(top, bottom):
     img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-    r0,g0,b0 = tuple(int(color_top.lstrip('#')[i:i+2],16) for i in (0,2,4))
-    r1,g1,b1 = tuple(int(color_bottom.lstrip('#')[i:i+2],16) for i in (0,2,4))
+    d   = ImageDraw.Draw(img)
+    r0, g0, b0 = hex_rgb(top)
+    r1, g1, b1 = hex_rgb(bottom)
     for y in range(H):
         t = y / H
-        r = int(r0 + (r1-r0)*t)
-        g = int(g0 + (g1-g0)*t)
-        b = int(b0 + (b1-b0)*t)
-        draw.line([(0,y),(W,y)], fill=(r,g,b))
+        d.line([(0, y), (W, y)],
+               fill=(int(r0+(r1-r0)*t), int(g0+(g1-g0)*t), int(b0+(b1-b0)*t)))
     return img
 
-# ── Post templates ─────────────────────────────────────────────────────────
+def logo(draw, x, y, theme="dark"):
+    sz = 60
+    draw.rounded_rectangle([x, y, x+sz, y+sz], radius=14, fill=PURPLE)
+    draw.text((x+sz//2, y+sz//2), "CC",
+              font=font(FONT_BOLD, 24), fill=WHITE, anchor="mm")
+    wm_col = WHITE if theme == "dark" else CHARCOAL
+    draw.text((x+sz+14, y+sz//2), "CampusClip",
+              font=font(FONT_BOLD, 28), fill=wm_col, anchor="lm")
 
-def post_light(filename, headline, body, tag=None, cta="link in bio"):
-    """Warm off-white background post (awareness / relatable)."""
-    img = Image.new("RGB", (W, H), BG_LIGHT)
-    draw = ImageDraw.Draw(img)
+def branding(draw, theme="dark"):
+    logo(draw, PAD, H - 96, theme)
 
-    # Subtle top stripe
-    for y in range(8):
-        draw.line([(0,y),(W,y)], fill=ACCENT)
-
-    # Tag chip (optional)
-    ty = 100
-    if tag:
-        add_tag(draw, tag, 60, ty)
-        ty += 70
-
-    # Headline
-    h_font = load_font(FONT_BOLD, 72)
-    lines = wrap_text(headline, h_font, W - 120, draw)
-    y = ty + 20
-    for line in lines[:4]:
-        draw.text((60, y), line, font=h_font, fill=TEXT_DARK)
-        y += 84
-
-    # Divider
-    y += 10
-    draw.line([(60, y), (W-60, y)], fill=ACCENT, width=4)
-    y += 30
-
-    # Body
-    b_font = load_font(FONT_REGULAR, 40)
-    b_lines = wrap_text(body, b_font, W - 120, draw)
-    for line in b_lines[:8]:
-        draw.text((60, y), line, font=b_font, fill=TEXT_MUTED)
-        y += 52
-
-    # CTA pill
-    if cta:
-        cy = H - 180
-        cta_font = load_font(FONT_BOLD, 30)
-        bbox = draw.textbbox((0,0), cta, font=cta_font)
-        cw = bbox[2]-bbox[0]
-        draw_rounded_rect(draw, [60, cy, 60+cw+48, cy+52], radius=26, fill=ACCENT)
-        draw.text((84, cy+26), cta, font=cta_font, fill=TEXT_LIGHT, anchor="lm")
-
-    add_branding(draw, img, theme="light")
+def save(img, filename):
     img.save(os.path.join(OUTPUT_DIR, filename))
     print(f"  ✓ {filename}")
 
-def post_dark(filename, headline, body, tag=None, cta="link in bio"):
-    """Deep navy dark post (launch / countdown)."""
-    img = make_gradient_bg("#1A1A2E", "#0F0F1A")
-    draw = ImageDraw.Draw(img)
 
-    # Top accent line
-    draw_rounded_rect(draw, [60, 60, 180, 68], radius=4, fill=ACCENT)
+# ── Template 1: HERO LIGHT ───────────────────────────────────────────────────
+# Cream bg · giant headline · purple accent word option · circles for depth
 
-    ty = 120
+def hero_light(filename, line1, line2=None, body=None, tag=None, cta=None):
+    img = Image.new("RGB", (W, H), CREAM)
+    img = circle(img, W + 60,  -60,  440, PURPLE, 22)
+    img = circle(img, -80, H + 80,  300, PURPLE, 12)
+    d   = ImageDraw.Draw(img)
+
+    # Left rule
+    d.rectangle([PAD, PAD, PAD + 6, H - PAD], fill="#E2DEFF")
+    d.rectangle([PAD, PAD, PAD + 6, PAD + 200], fill=PURPLE)
+
+    y = PAD + 20
     if tag:
-        add_tag(draw, tag, 60, ty, bg="#ffffff22", fg=TEXT_LIGHT)
-        ty += 70
+        tf = font(FONT_BOLD, 26)
+        tw = d.textbbox((0,0), tag, font=tf)[2] + 40
+        d.rounded_rectangle([PAD+24, y, PAD+24+tw, y+44], radius=22, fill=PURPLE)
+        d.text((PAD+44, y+22), tag, font=tf, fill=WHITE, anchor="lm")
+        y += 68
+    else:
+        y += 30
 
-    h_font = load_font(FONT_BOLD, 80)
-    lines = wrap_text(headline, h_font, W - 120, draw)
-    y = ty + 20
-    for line in lines[:3]:
-        draw.text((60, y), line, font=h_font, fill=TEXT_LIGHT)
-        y += 96
+    # Line 1 — charcoal
+    h1 = font(FONT_BOLD, 116)
+    for l in wrap(line1, h1, W - PAD*2 - 30, d)[:3]:
+        d.text((PAD+24, y), l, font=h1, fill=CHARCOAL)
+        y += 130
+
+    # Line 2 — purple (optional emphasis)
+    if line2:
+        h2 = font(FONT_BOLD, 116)
+        for l in wrap(line2, h2, W - PAD*2 - 30, d)[:2]:
+            d.text((PAD+24, y), l, font=h2, fill=PURPLE)
+            y += 130
+
+    y += 10
+    d.line([(PAD+24, y), (W - PAD, y)], fill="#D0CAFF", width=2)
+    y += 32
+
+    if body:
+        bf = font(FONT_REGULAR, 40)
+        for l in wrap(body, bf, W - PAD*2 - 30, d)[:6]:
+            d.text((PAD+24, y), l, font=bf, fill=SLATE)
+            y += 54
+
+    if cta:
+        cy = H - 176
+        cf = font(FONT_BOLD, 28)
+        cw = d.textbbox((0,0), cta, font=cf)[2]
+        d.rounded_rectangle([PAD+24, cy, PAD+24+cw+48, cy+52],
+                             radius=26, fill=PURPLE)
+        d.text((PAD+48, cy+26), cta, font=cf, fill=WHITE, anchor="lm")
+
+    branding(d, "light")
+    save(img, filename)
+
+
+# ── Template 2: HERO DARK ────────────────────────────────────────────────────
+# Deep navy gradient · glowing purple circles · white headline · muted body
+
+def hero_dark(filename, headline, body=None, cta=None):
+    img = gradient(NAVY, "#070C12")
+    img = circle(img, W - 80,  160, 360, PURPLE, 30)
+    img = circle(img, 120, H - 180, 260, PURPLE, 18)
+    d   = ImageDraw.Draw(img)
+
+    d.rectangle([PAD, 64, PAD + 100, 72], fill=PURPLE)
+
+    y = 120
+    hf = font(FONT_BOLD, 110)
+    for l in wrap(headline, hf, W - PAD*2, d)[:4]:
+        d.text((PAD, y), l, font=hf, fill=WHITE)
+        y += 124
 
     y += 16
-    b_font = load_font(FONT_REGULAR, 42)
-    b_lines = wrap_text(body, b_font, W - 120, draw)
-    for line in b_lines[:7]:
-        draw.text((60, y), line, font=b_font, fill="#CBD5E1")
-        y += 56
+    if body:
+        bf = font(FONT_REGULAR, 42)
+        for l in wrap(body, bf, W - PAD*2, d)[:7]:
+            d.text((PAD, y), l, font=bf, fill=MUTED)
+            y += 56
 
     if cta:
-        cy = H - 180
-        cta_font = load_font(FONT_BOLD, 30)
-        bbox = draw.textbbox((0,0), cta, font=cta_font)
-        cw = bbox[2]-bbox[0]
-        draw_rounded_rect(draw, [60, cy, 60+cw+48, cy+52], radius=26, fill=ACCENT)
-        draw.text((84, cy+26), cta, font=cta_font, fill=TEXT_LIGHT, anchor="lm")
+        cy = H - 176
+        cf = font(FONT_BOLD, 30)
+        cw = d.textbbox((0,0), cta, font=cf)[2]
+        d.rounded_rectangle([PAD, cy, PAD+cw+56, cy+56], radius=28, fill=PURPLE)
+        d.text((PAD+28, cy+28), cta, font=cf, fill=WHITE, anchor="lm")
 
-    add_branding(draw, img, theme="dark")
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    branding(d, "dark")
+    save(img, filename)
 
-def post_meme(filename, top_text, bottom_text):
-    """Two-panel meme style."""
-    img = Image.new("RGB", (W, H), "#FFFFFF")
-    draw = ImageDraw.Draw(img)
 
-    # Top half
-    draw_rounded_rect(draw, [40, 40, W-40, H//2-20], radius=24, fill=CHIP_BG)
-    t_font = load_font(FONT_BOLD, 52)
-    t_lines = wrap_text(top_text, t_font, W-160, draw)
-    ty = 120
-    for line in t_lines[:5]:
-        draw.text((W//2, ty), line, font=t_font, fill=TEXT_DARK, anchor="mm")
-        ty += 66
+# ── Template 3: SPLIT ────────────────────────────────────────────────────────
+# Purple top block · cream bottom · bold contrast layout
 
-    # Bottom half
-    draw_rounded_rect(draw, [40, H//2+20, W-40, H-140], radius=24, fill="#EEF2FF")
-    b_font = load_font(FONT_BOLD, 52)
-    b_lines = wrap_text(bottom_text, b_font, W-160, draw)
-    by = H//2 + 100
-    for line in b_lines[:5]:
-        draw.text((W//2, by), line, font=b_font, fill=ACCENT, anchor="mm")
-        by += 66
+def split(filename, top_text, bottom_headline, bottom_body=None, cta=None):
+    img = Image.new("RGB", (W, H), CREAM)
+    d   = ImageDraw.Draw(img)
+    split_y = 400
+    d.rectangle([0, 0, W, split_y], fill=PURPLE3)
+    img = circle(img, W - 100, split_y, 200, PURPLE, 60)
+    d   = ImageDraw.Draw(img)
 
-    add_branding(draw, img, theme="light")
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    tf = font(FONT_BOLD, 86)
+    tlines = wrap(top_text, tf, W - PAD*2, d)
+    ty = max(PAD, (split_y - len(tlines[:3])*102)//2)
+    for l in tlines[:3]:
+        d.text((PAD, ty), l, font=tf, fill=WHITE)
+        ty += 102
 
-def post_quote(filename, quote, attribution, subtext=""):
-    """Large quote card — testimonial style."""
-    img = make_gradient_bg("#F9F7FF", "#EEF2FF")
-    draw = ImageDraw.Draw(img)
+    y = split_y + 56
+    bh = font(FONT_BOLD, 72)
+    for l in wrap(bottom_headline, bh, W - PAD*2, d)[:3]:
+        d.text((PAD, y), l, font=bh, fill=CHARCOAL)
+        y += 86
+    y += 12
 
-    # Big quotation mark
-    qfont = load_font(FONT_BOLD, 200)
-    draw.text((50, 20), "“", font=qfont, fill="#DDD8FF")
+    if bottom_body:
+        bf = font(FONT_REGULAR, 38)
+        for l in wrap(bottom_body, bf, W - PAD*2, d)[:4]:
+            d.text((PAD, y), l, font=bf, fill=SLATE)
+            y += 52
 
-    # Quote text
-    q_font = load_font(FONT_BOLD, 64)
-    lines = wrap_text(quote, q_font, W - 120, draw)
-    y = 220
-    for line in lines[:5]:
-        draw.text((60, y), line, font=q_font, fill=TEXT_DARK)
-        y += 80
+    if cta:
+        cy = H - 168
+        cf = font(FONT_BOLD, 28)
+        cw = d.textbbox((0,0), cta, font=cf)[2]
+        d.rounded_rectangle([PAD, cy, PAD+cw+48, cy+52], radius=26, fill=CHARCOAL)
+        d.text((PAD+24, cy+26), cta, font=cf, fill=WHITE, anchor="lm")
 
-    # Attribution
-    y += 20
-    draw.line([(60, y), (200, y)], fill=ACCENT, width=3)
-    y += 20
-    a_font = load_font(FONT_BOLD, 34)
-    draw.text((60, y), attribution, font=a_font, fill=ACCENT)
+    branding(d, "light")
+    save(img, filename)
+
+
+# ── Template 4: QUOTE CARD ───────────────────────────────────────────────────
+# Oversized decorative quote mark · centered text · attribution bar
+
+def quote_card(filename, quote, attribution, subtext=None):
+    img = Image.new("RGB", (W, H), "#FAFAF7")
+    img = circle(img, W//2, H//2, 460, PURPLE, 7)
+    d   = ImageDraw.Draw(img)
+
+    # Giant background quote mark
+    d.text((PAD - 24, -80), "“",
+           font=font(FONT_BOLD, 300), fill="#EAE5FF")
+
+    # Attribution pill top-right
+    af  = font(FONT_BOLD, 24)
+    aw  = d.textbbox((0,0), attribution, font=af)[2]
+    d.rounded_rectangle([W-PAD-aw-40, 56, W-PAD, 100], radius=20, fill=PURPLE)
+    d.text((W-PAD-aw-20, 78), attribution, font=af, fill=WHITE, anchor="lm")
+
+    # Quote
+    qf    = font(FONT_BOLD, 74)
+    qlines= wrap(quote, qf, W - PAD*2, d)
+    total = len(qlines[:5]) * 90
+    y     = max(200, (H - total)//2 - 30)
+    for l in qlines[:5]:
+        d.text((PAD, y), l, font=qf, fill=CHARCOAL)
+        y += 90
+
+    y += 24
+    d.rectangle([PAD, y, PAD + 80, y + 6], fill=PURPLE)
+    y += 34
 
     if subtext:
-        y += 50
-        s_font = load_font(FONT_REGULAR, 36)
-        s_lines = wrap_text(subtext, s_font, W-120, draw)
-        for line in s_lines[:4]:
-            draw.text((60, y), line, font=s_font, fill=TEXT_MUTED)
+        sf = font(FONT_REGULAR, 36)
+        for l in wrap(subtext, sf, W - PAD*2, d)[:3]:
+            d.text((PAD, y), l, font=sf, fill=SLATE)
             y += 48
 
-    add_branding(draw, img, theme="light")
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    branding(d, "light")
+    save(img, filename)
 
-def post_countdown(filename, number, unit, subtext, theme="dark"):
-    """Big countdown number post."""
+
+# ── Template 5: BIG NUMBER ───────────────────────────────────────────────────
+# Huge centred number · concentric rings for depth · top/dark themes
+
+def big_number(filename, number, label, subtext, theme="dark"):
     if theme == "dark":
-        img = make_gradient_bg("#1A1A2E", "#0F0F1A")
-        draw = ImageDraw.Draw(img)
-        num_color = TEXT_LIGHT
-        sub_color = "#CBD5E1"
+        img = gradient(NAVY, "#060C14")
+        nc, lc, sc = WHITE,   PURPLE2, MUTED
+        rc = PURPLE
     else:
-        img = Image.new("RGB", (W, H), BG_LIGHT)
-        draw = ImageDraw.Draw(img)
-        num_color = TEXT_DARK
-        sub_color = TEXT_MUTED
+        img = Image.new("RGB", (W, H), CREAM)
+        nc, lc, sc = CHARCOAL, PURPLE,  SLATE
+        rc = PURPLE
 
-    # Accent strip
-    draw_rounded_rect(draw, [60, 60, 180, 70], radius=4, fill=ACCENT)
+    cx, cy_c = W//2, 420
+    for r, a in [(290, 20), (220, 35), (150, 55)]:
+        img = ring(img, cx, cy_c, r, rc, a, width=3)
 
-    # Big number
-    n_font = load_font(FONT_BOLD, 260)
-    draw.text((W//2, 420), str(number), font=n_font, fill=ACCENT, anchor="mm")
+    d = ImageDraw.Draw(img)
+    d.rectangle([PAD, 60, PAD + 100, 68], fill=rc)
 
-    # Unit
-    u_font = load_font(FONT_BOLD, 72)
-    draw.text((W//2, 580), unit.upper(), font=u_font, fill=num_color, anchor="mm")
+    nf   = font(FONT_BOLD, 300)
+    nbox = d.textbbox((0,0), str(number), font=nf)
+    d.text((cx - (nbox[2]-nbox[0])//2, cy_c - 185), str(number), font=nf, fill=nc)
 
-    # Subtext
-    s_font = load_font(FONT_REGULAR, 40)
-    s_lines = wrap_text(subtext, s_font, W-180, draw)
-    y = 680
-    for line in s_lines[:5]:
-        draw.text((W//2, y), line, font=s_font, fill=sub_color, anchor="mm")
+    lf   = font(FONT_BOLD, 70)
+    lbox = d.textbbox((0,0), label.upper(), font=lf)
+    d.text((cx - (lbox[2]-lbox[0])//2, cy_c + 160), label.upper(), font=lf, fill=lc)
+
+    sf = font(FONT_REGULAR, 38)
+    y  = cy_c + 280
+    for l in wrap(subtext, sf, W - PAD*2 - 80, d)[:4]:
+        bbox = d.textbbox((0,0), l, font=sf)
+        d.text((cx - (bbox[2]-bbox[0])//2, y), l, font=sf, fill=sc)
         y += 52
 
-    add_branding(draw, img, theme=theme)
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    branding(d, theme)
+    save(img, filename)
 
-def post_launch(filename, headline, body):
-    """High-energy launch day post."""
-    img = make_gradient_bg("#4F46E5", "#7C3AED")
-    draw = ImageDraw.Draw(img)
 
-    # Glow circles (decorative)
-    for cx, cy, r, a in [(900,150,300,30),(150,900,200,20)]:
-        overlay = Image.new("RGBA", (W,H), (0,0,0,0))
-        od = ImageDraw.Draw(overlay)
-        od.ellipse([cx-r,cy-r,cx+r,cy+r], fill=(255,255,255,a))
-        img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"))
-        draw = ImageDraw.Draw(img)
+# ── Template 6: LAUNCH HERO ─────────────────────────────────────────────────
+# Full purple gradient · giant headline · white CTA button
 
-    h_font = load_font(FONT_BOLD, 100)
-    lines = wrap_text(headline, h_font, W-120, draw)
-    y = 180
-    for line in lines[:3]:
-        draw.text((60, y), line, font=h_font, fill=TEXT_LIGHT)
-        y += 116
+def launch_hero(filename, headline, body):
+    img = gradient("#5540F0", "#9060F8")
+    img = circle(img, W + 100, -100, 500, WHITE,   10)
+    img = circle(img, -120, H + 120,  400, "#000000", 18)
+    img = circle(img, W//2, H//2,     600, "#3020CC", 55)
+    d   = ImageDraw.Draw(img)
+
+    d.rectangle([PAD, 80, PAD + 180, 88], fill="#FFFFFF33")
+
+    hf = font(FONT_BOLD, 150)
+    y  = 140
+    for l in wrap(headline, hf, W - PAD*2, d)[:2]:
+        d.text((PAD, y), l, font=hf, fill=WHITE)
+        y += 170
 
     y += 16
-    b_font = load_font(FONT_REGULAR, 44)
-    b_lines = wrap_text(body, b_font, W-120, draw)
-    for line in b_lines[:7]:
-        draw.text((60, y), line, font=b_font, fill="#E0E7FF")
-        y += 58
+    d.rectangle([PAD, y, W - PAD, y + 3], fill="#FFFFFF44")
+    y += 40
 
-    # CTA
-    cy2 = H - 180
-    cta_font = load_font(FONT_BOLD, 32)
-    cta = "link in bio ↓"
-    bbox = draw.textbbox((0,0), cta, font=cta_font)
-    cw = bbox[2]-bbox[0]
-    draw_rounded_rect(draw, [60, cy2, 60+cw+48, cy2+56], radius=28, fill="#FFFFFF")
-    draw.text((84, cy2+28), cta, font=cta_font, fill=ACCENT, anchor="lm")
+    bf = font(FONT_REGULAR, 46)
+    for l in wrap(body, bf, W - PAD*2, d)[:6]:
+        d.text((PAD, y), l, font=bf, fill="#DDD4FF")
+        y += 60
 
-    add_branding(draw, img, theme="dark")
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    cy  = H - 180
+    cf  = font(FONT_BOLD, 32)
+    cta = "download now — link in bio"
+    cw  = d.textbbox((0,0), cta, font=cf)[2]
+    d.rounded_rectangle([PAD, cy, PAD+cw+56, cy+60], radius=30, fill=WHITE)
+    d.text((PAD+28, cy+30), cta, font=cf, fill=PURPLE, anchor="lm")
 
-def post_checklist(filename, title, items, cta="link in bio"):
-    """Checklist style carousel slide (renders as single summary card)."""
-    img = Image.new("RGB", (W, H), BG_LIGHT)
-    draw = ImageDraw.Draw(img)
+    branding(d, "dark")
+    save(img, filename)
 
-    draw_rounded_rect(draw, [0, 0, W, 12], radius=0, fill=ACCENT)
 
-    t_font = load_font(FONT_BOLD, 58)
-    t_lines = wrap_text(title, t_font, W-120, draw)
-    y = 80
-    for line in t_lines[:2]:
-        draw.text((60, y), line, font=t_font, fill=TEXT_DARK)
-        y += 72
+# ── Template 7: TWO PANEL (meme / comparison) ────────────────────────────────
+# Dark left / cream right split — problem vs solution
 
-    y += 20
-    i_font = load_font(FONT_REGULAR, 38)
-    b_font = load_font(FONT_BOLD, 38)
-    for item in items[:8]:
-        # Tick circle
-        draw.ellipse([60, y, 100, y+40], outline=ACCENT, width=3)
-        draw.text((80, y+20), "✓", font=load_font(FONT_BOLD, 28), fill=ACCENT, anchor="mm")
-        i_lines = wrap_text(item, i_font, W-180, draw)
-        for j, line in enumerate(i_lines[:2]):
-            draw.text((120, y + j*44), line, font=i_font, fill=TEXT_DARK)
-        y += max(52, len(i_lines)*44 + 12)
+def two_panel(filename, left_label, left_lines, right_label, right_lines):
+    img = Image.new("RGB", (W, H), WHITE)
+    d   = ImageDraw.Draw(img)
+    sx  = W // 2
+
+    d.rectangle([0,  0, sx, H], fill="#10131A")
+    d.rectangle([sx, 0, W,  H], fill=CREAM)
+    img = circle(img, sx//2,       H//2, 220, PURPLE, 25)
+    img = circle(img, sx + sx//2,  H//2, 220, PURPLE, 12)
+    d   = ImageDraw.Draw(img)
+    d.rectangle([sx-2, 0, sx+2, H], fill=PURPLE)
+
+    ll  = font(FONT_BOLD, 28)
+    d.text((sx//2, 76), left_label,  font=ll, fill=MUTED,   anchor="mm")
+    d.text((sx+sx//2, 76), right_label, font=ll, fill=PURPLE, anchor="mm")
+
+    lif = font(FONT_REGULAR, 36)
+    rif = font(FONT_BOLD,    36)
+    ly = ry = 150
+
+    for l in left_lines[:7]:
+        bbox = d.textbbox((0,0), l, font=lif)
+        lw   = bbox[2]-bbox[0]
+        d.text((sx//2 - lw//2, ly), l, font=lif, fill="#94A3B8")
+        ly += 58
+
+    for l in right_lines[:7]:
+        bbox = d.textbbox((0,0), l, font=rif)
+        rw   = bbox[2]-bbox[0]
+        d.text((sx+sx//2 - rw//2, ry), l, font=rif, fill=CHARCOAL)
+        ry += 58
+
+    branding(d, "dark")
+    save(img, filename)
+
+
+# ── Template 8: CHECKLIST ───────────────────────────────────────────────────
+# Numbered circles · thick left rule · clean cream background
+
+def checklist(filename, title, items, cta=None):
+    img = Image.new("RGB", (W, H), CREAM)
+    img = circle(img, W + 100, -100, 420, PURPLE, 14)
+    d   = ImageDraw.Draw(img)
+
+    d.rectangle([0, 0, 14, H], fill=PURPLE)
+
+    tf = font(FONT_BOLD, 68)
+    y  = PAD
+    for l in wrap(title, tf, W - PAD*2, d)[:2]:
+        d.text((PAD + 14, y), l, font=tf, fill=CHARCOAL)
+        y += 82
+    y += 10
+    d.rectangle([PAD+14, y, W-PAD, y+3], fill="#DDD8F0")
+    y += 28
+
+    nf  = font(FONT_BOLD,    36)
+    itf = font(FONT_REGULAR, 40)
+    for i, item in enumerate(items[:7]):
+        nx = PAD + 14
+        d.ellipse([nx, y, nx+52, y+52], fill=PURPLE)
+        d.text((nx+26, y+26), str(i+1), font=nf, fill=WHITE, anchor="mm")
+        ilines = wrap(item, itf, W - PAD*2 - 76, d)
+        for j, l in enumerate(ilines[:2]):
+            d.text((nx+66, y + j*46), l, font=itf, fill=CHARCOAL)
+        y += max(68, len(ilines)*46) + 18
 
     if cta:
-        cy = H - 160
-        cta_font = load_font(FONT_BOLD, 30)
-        bbox = draw.textbbox((0,0), cta, font=cta_font)
-        cw = bbox[2]-bbox[0]
-        draw_rounded_rect(draw, [60, cy, 60+cw+48, cy+52], radius=26, fill=ACCENT)
-        draw.text((84, cy+26), cta, font=cta_font, fill=TEXT_LIGHT, anchor="lm")
+        cy  = H - 164
+        cf  = font(FONT_BOLD, 28)
+        cw  = d.textbbox((0,0), cta, font=cf)[2]
+        d.rounded_rectangle([PAD+14, cy, PAD+14+cw+48, cy+52], radius=26, fill=PURPLE)
+        d.text((PAD+38, cy+26), cta, font=cf, fill=WHITE, anchor="lm")
 
-    add_branding(draw, img, theme="light")
-    img.save(os.path.join(OUTPUT_DIR, filename))
-    print(f"  ✓ {filename}")
+    branding(d, "light")
+    save(img, filename)
 
-# ── Generate all posts ─────────────────────────────────────────────────────
 
-print("\n🎨 Generating CampusClip Instagram posts...\n")
+# ── Template 9: STATEMENT DARK (meme-style) ─────────────────────────────────
+# Without/With — two halves, looks intentionally designed
 
-# === AUGUST PRE-LAUNCH ===
+def statement_dark(filename, without_text, with_text):
+    img = gradient(NAVY, "#0A0F18")
+    img = circle(img, W//2, H//2 - 4, 460, PURPLE, 12)
+    d   = ImageDraw.Draw(img)
+
+    # Divider
+    d.rectangle([0, H//2 - 3, W, H//2 + 3], fill=PURPLE)
+
+    # Labels
+    lf = font(FONT_BOLD, 26)
+    d.rounded_rectangle([PAD, 52, PAD+180, 94], radius=20, fill="#FFFFFF12")
+    d.text((PAD+90, 73), "WITHOUT  ✗", font=lf, fill=MUTED, anchor="mm")
+
+    d.rounded_rectangle([PAD, H//2+24, PAD+160, H//2+66], radius=20, fill=PURPLE)
+    d.text((PAD+80, H//2+45), "WITH  ✓", font=lf, fill=WHITE, anchor="mm")
+
+    wf = font(FONT_REGULAR, 46)
+    wy = 110
+    for l in wrap(without_text, wf, W - PAD*2, d)[:4]:
+        d.text((PAD, wy), l, font=wf, fill="#7A8CA0")
+        wy += 62
+
+    wf2 = font(FONT_BOLD, 48)
+    wy2 = H//2 + 82
+    for l in wrap(with_text, wf2, W - PAD*2, d)[:4]:
+        d.text((PAD, wy2), l, font=wf2, fill=WHITE)
+        wy2 += 66
+
+    branding(d, "dark")
+    save(img, filename)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# GENERATE ALL POSTS
+# ════════════════════════════════════════════════════════════════════════════
+
+print("\n🎨  CampusClip — generating v2 posts...\n")
+
+# ── August Pre-Launch ────────────────────────────────────────────────────────
 
 print("── August Pre-Launch ──")
 
-post_light(
+hero_light(
     "aug01_6apps.png",
-    "you have 6 apps open and still don't know when your midterm is",
-    "canvas. google cal. your notes app. the group chat you're searching through. instagram dms. another group chat.\n\nwe made an app for this.",
-    tag="coming September",
+    "you have 6 apps open",
+    "and still don't know when your midterm is.",
+    body="canvas. google cal. your notes app. the group chat. instagram dms. another group chat.\n\nwe made an app for this.",
+    tag="coming August 19 · Western",
     cta="follow so you don't miss it"
 )
 
-post_light(
+statement_dark(
     "aug04_groupchat.png",
-    "the group chat is not a calendar",
-    '"wait when is the project due"\n"idk check canvas"\n"canvas doesn\'t have it"\n"wasn\'t it in the syllabus"\n"which syllabus"\n\nthis is a problem we\'re fixing.',
-    tag="CampusClip · September · Western"
+    '"wait when is the project due"\n"idk check canvas"\n"canvas doesn\'t have it"\n"which syllabus"\n\nthis is every Western class group chat.',
+    'CampusClip replaces this with a class feed that has your dates, your grades, and your classmates — all in one place.'
 )
 
-post_quote(
+quote_card(
     "aug05_quote.png",
     "my whole university life was just there",
-    "Beta user, Western University",
-    "She scanned her syllabus. Joined her classes. Saw her classmates. Checked her grade. All in one place. CampusClip launches at Western this September."
+    "Beta user · Western",
+    "She scanned her syllabus. Joined her classes. Saw her classmates. Checked her grade. One app. CampusClip launches at Western August 19th."
 )
 
-post_light(
-    "aug11_onestepbehind.png",
-    '"I stopped feeling one step behind"',
-    "that's the goal. not to be more productive. not to optimise your study habits. just to not feel scattered.\n\nCampusClip. launching at Western this September.",
-    cta="follow for updates"
-)
-
-post_countdown(
+big_number(
     "aug07_25days.png",
     25, "days",
-    "The students who download CampusClip in the first week are going to have a very different year. Western University · September 2026.",
+    "The students who download CampusClip in the first week are going to have a very different year. Western University · August 19, 2026.",
     theme="light"
 )
 
-post_meme(
+two_panel(
     "aug08_returning.png",
-    "returning to Western ✓",
-    "going back to your 6-app situation ✗\n\nCampusClip. September. Western."
+    "last September",
+    ["6 apps", "3 group chats", "no idea what's due", "calculating grades manually", "never found a study group", "always one step behind"],
+    "this September",
+    ["CampusClip", "one app", "semester organised day one", "grade calculated automatically", "classmates already there", "you're ready"]
 )
 
-post_countdown(
+hero_light(
+    "aug11_onestepbehind.png",
+    '"I stopped feeling",\none step behind"',
+    body="that's the goal. not to be more productive. not to hack your study habits. just to not feel scattered.\n\nCampusClip. launching at Western August 19th.",
+    cta="follow for updates"
+)
+
+big_number(
     "aug14_18days.png",
     18, "days",
-    "then it all starts — new classes, new syllabuses, new group chats. this year is different. CampusClip launches at Western from day one.",
+    "then it all starts — new classes, new syllabuses, new group chats you'll never find what you need in. this year is different.",
     theme="dark"
 )
 
-# === COUNTDOWN ===
+# ── Final Countdown ──────────────────────────────────────────────────────────
 
 print("\n── Final Countdown ──")
 
-post_countdown(
+big_number(
     "aug15_4days.png",
     4, "days",
-    "CampusClip launches at Western on August 19th. if you're a Western student, this is the one app you want on your phone before September.",
+    "CampusClip launches at Western on August 19th. one app for your classes, your grades, and your classmates.",
     theme="dark"
 )
 
-post_light(
+quote_card(
     "aug17_wishihadit.png",
-    '"I wish I had this in first year"',
-    "not in a productivity-hack way. in a 'my whole semester is just there' way.\n\ndrops tomorrow.",
-    cta="follow now"
+    "I wish I had this in first year",
+    "Western student · Beta",
+    "not in a productivity-hack way. in a 'my whole semester is just there' way. drops tomorrow."
 )
 
-post_dark(
+hero_dark(
     "aug18_tomorrow.png",
     "tomorrow.",
-    "CampusClip is live at Western University tomorrow.\n\ndownload it. add your classes. photograph your syllabus.\n\nyour September just got easier.\n\n🔔 turn on notifications.",
-    cta=""
+    body="CampusClip is live at Western University tomorrow.\n\ndownload it. add your classes. photograph your syllabus.\n\nyour September just got easier."
 )
 
-# === LAUNCH DAY ===
+# ── Launch Day ───────────────────────────────────────────────────────────────
 
 print("\n── Launch Day ──")
 
-post_launch(
+launch_hero(
     "aug19_launch.png",
     "it's live.",
     "CampusClip is now available at Western University.\n\ndownload it. photograph your syllabus. join your classes.\n\nyour classmates are already in there."
 )
 
-post_dark(
+hero_dark(
     "aug20_day2.png",
-    "yesterday [X] Western students decided to stop feeling scattered.",
-    "your class is in here. your semester is organised. your grade is calculated.\n\nstill not on it?",
+    "your classmates are already in there.",
+    body="[X] Western students in the first 24 hours.\n[X] class pages live.\n[X] syllabuses uploaded.\n\nstill not on it?",
     cta="link in bio"
 )
 
-# === LAUNCH AFTERMATH ===
+# ── Launch Aftermath ─────────────────────────────────────────────────────────
 
 print("\n── Launch Aftermath ──")
 
-post_dark(
+hero_dark(
     "aug22_3daysin.png",
     "3 days in.",
-    "[X] Western students have already uploaded their syllabus.\n[X] class pages are live.\n\nyour classmates are in there. the longer you wait, the more you miss.",
+    body="[X] Western students have already uploaded their syllabus.\n[X] class pages are live.\n\nthe longer you wait, the more you miss.",
     cta="link in bio"
 )
 
-post_light(
+hero_light(
     "aug24_gradetracker.png",
-    "do you actually know what grade you need on your final exam?",
-    "not an estimate. the exact number.\n\nCampusClip calculates it automatically based on your syllabus weights and marks so far.\n\nyou'll never go into an exam not knowing what you need. ever.",
+    "do you know what grade you need",
+    "on your final exam?",
+    body="not an estimate. the exact number — based on your syllabus weights and marks so far.\n\nCampusClip calculates it automatically. you'll never go into an exam not knowing what you need.",
     cta="link in bio"
 )
 
-post_meme(
+split(
     "aug25_orientation.png",
-    "me at orientation without CampusClip:\n6 apps open, no idea what's happening",
-    "me at orientation with CampusClip:\ncalm. organised. already found two clubs.\n\nlink in bio → right panel"
-)
-
-post_light(
-    "aug27_classmate.png",
-    "somewhere in your lecture there's a person who would be your best study partner.",
-    "you won't find them on Canvas.\nyou won't find them on Instagram.\nyou'd have to sit next to them three times before you'd even ask their name.\n\nor you could just open CampusClip, join the class, and see everyone in there already.",
+    "orientation week.",
+    "know your classmates before you walk in.",
+    bottom_body="join your class feeds on CampusClip and you already know who's in your PSYCH 1000 before the first lecture.",
     cta="link in bio"
 )
 
-post_checklist(
+hero_light(
+    "aug27_classmate.png",
+    "somewhere in your lecture is your best study partner.",
+    body="you won't find them on Canvas. you won't find them on Instagram.\n\nor you could just open CampusClip, join the class, and see everyone already in there.",
+    cta="link in bio"
+)
+
+checklist(
     "aug28_checklist.png",
-    "your first week of semester checklist",
+    "your first week checklist",
     [
         "Download CampusClip before first class",
-        "Add all your courses (60 seconds)",
+        "Add all your courses (takes 60 seconds)",
         "Photograph every syllabus as you get it",
         "Join your class feeds — find your classmates",
         "Browse campus clubs and events",
@@ -513,183 +615,194 @@ post_checklist(
     ]
 )
 
-post_light(
+hero_light(
     "aug29_weekend.png",
     "enjoy this weekend.",
-    "next weekend you'll be back at Western, pretending you don't have three syllabuses to read.\n\nwe'll be there when you're ready.",
-    cta="downloads take 20 seconds"
+    body="next weekend you'll be back at Western, pretending you don't have three syllabuses to read.\n\nwe'll be there when you're ready.",
+    cta="download takes 20 seconds"
 )
 
-post_countdown(
+big_number(
     "aug30_twosleeps.png",
     2, "sleeps",
-    "do one thing today: download CampusClip. that's it.\nyou can do the rest when your syllabus is in your hand.",
+    "do one thing tonight: download CampusClip. you can do the rest when your syllabus is in your hand.",
     theme="dark"
 )
 
-post_dark(
+hero_dark(
     "aug31_tomorrow.png",
     "tomorrow it starts.",
-    "new classes. new syllabuses. new people in your lectures you've never met.\n\nthis year you don't have to figure it out by week 6.\n\ndownload CampusClip tonight. walk in tomorrow ready.",
+    body="new classes. new syllabuses. new people in your lectures you've never met.\n\nthis year you don't have to figure it out by week 6.\n\ndownload CampusClip tonight. walk in tomorrow ready.",
     cta="link in bio"
 )
 
-# === SEPTEMBER ===
+# ── September Week 1 ─────────────────────────────────────────────────────────
 
-print("\n── September: Week 1 ──")
+print("\n── September Week 1 ──")
 
-post_launch(
+launch_hero(
     "sep01_firstday.png",
     "first day.",
     "you're going to get 4 syllabuses today.\n\nphotograph each one in CampusClip the moment you get it.\n\nby tonight, your entire semester is organised."
 )
 
-post_light(
+hero_light(
     "sep03_studygroup.png",
-    "raise your hand if you've been in a class for three weeks and still don't know anyone's name.",
-    "CampusClip fixes this.\n\njoin your class in the app and your classmates are right there — no awkward Instagram search, no waiting until someone makes a group chat.\n\nyour study group is in there. go find them.",
+    "been in class three weeks and still don't know anyone's name?",
+    body="CampusClip fixes this.\n\njoin your class and your classmates are right there — no awkward Instagram search, no waiting for someone to make a group chat.",
     cta="link in bio"
 )
 
-post_meme(
+two_panel(
     "sep04_week1meme.png",
-    "without CampusClip:\n6 apps · 3 group chats · no idea what's due · already behind",
-    "with CampusClip:\none app · semester organised · know my classmates · know my grade targets"
+    "without CampusClip",
+    ["6 apps open", "3 group chats", "no idea what's due", "calculating grades by hand", "never found a study group"],
+    "with CampusClip",
+    ["one app", "class feed built in", "every due date visible", "grade auto-calculated", "study group sorted week 1"]
 )
 
-post_light(
+hero_light(
     "sep05_weekend.png",
-    "surviving your first week of semester deserves recognition.",
-    "while you're recovering this weekend, your CampusClip is sitting there with your entire semester already organised.\n\nno Sunday anxiety about what's due Monday.\n\nyou're welcome 🎓",
-    cta="link in bio if you haven't downloaded yet"
+    "you survived week one.",
+    body="while you're recovering this weekend, your CampusClip is sitting there with your entire semester already organised.\n\nno Sunday anxiety about what's due Monday.",
+    cta="link in bio if you haven't yet"
 )
 
-post_light(
+split(
     "sep07_week2.png",
     "week 2.",
-    "by now you've seen your syllabuses. you know what this semester looks like.\n\nthe students who scanned theirs into CampusClip already know every due date, every exam, and exactly what grade they need on each one.\n\nare you one of them?",
+    "your classmates who scanned their syllabus already know every due date, every exam, and exactly what grade they need.",
+    bottom_body="are you one of them?",
     cta="still not too late → link in bio"
 )
 
-print("\n── September: Week 2 ──")
+# ── September Week 2 ─────────────────────────────────────────────────────────
 
-post_light(
+print("\n── September Week 2 ──")
+
+hero_light(
     "sep08_clubs.png",
     "clubs at Western don't come to you.",
-    "you have to find them — and orientation week is basically the only time they're visible.\n\nCampusClip shows you what clubs are on campus, what they're about, and when they're meeting.\n\nno more missing the thing you would have actually loved.",
+    body="orientation week is basically the only time they're visible.\n\nCampusClip shows you what's on campus, what they're about, and when they're meeting.",
     cta="link in bio"
 )
 
-post_meme(
+statement_dark(
     "sep09_groupchatgrief.png",
-    "the four stages of group chat grief:\n1. 'someone add me'\n2. 47 messages about when to meet\n3. assignment reminder buried in memes",
-    '4. "wait that was due TODAY"\n\nCampusClip replaces this with a class feed that actually works.'
+    '"someone add me to the group chat"\n47 messages about when to meet\nassignment reminder buried in memes\n"wait that was due TODAY"',
+    'CampusClip replaces this with a class feed that has your dates, your classmates, and no chaos.'
 )
 
-post_light(
+hero_dark(
     "sep11_gradecheck.png",
-    "quick question:",
-    "right now, today, do you know your weighted grade in each of your classes?\n\nnot what Canvas shows. your actual grade based on the assignments you've gotten back.\n\nif the answer is no — that's the problem CampusClip solves.",
+    "do you know your actual grade right now?",
+    body="not what Canvas shows. your actual weighted grade based on the assignments you've gotten back.\n\nif the answer is no — that's the problem CampusClip solves.",
     cta="link in bio"
 )
 
-post_light(
+split(
     "sep14_twoweeks.png",
     "two weeks in.",
-    "if you feel organised: good. you're ahead.\n\nif you feel scattered: download CampusClip. scan your syllabuses. it's genuinely not too late to fix this.",
+    "if you feel scattered, it's fixable.",
+    bottom_body="scan your syllabuses. it's genuinely not too late to get your semester under control.",
     cta="link in bio"
 )
 
-print("\n── September: Week 3 ──")
+# ── September Week 3 ─────────────────────────────────────────────────────────
 
-post_light(
+print("\n── September Week 3 ──")
+
+hero_light(
     "sep15_firstassignment.png",
-    "the first assignment of the semester is coming.",
-    "do you know exactly what it's worth?\nexactly what you need to get to stay on track for your target grade?\nwho in your class you can study with before it's due?\n\nCampusClip has all three.",
+    "your first assignment is coming.",
+    body="do you know exactly what it's worth?\nwhat you need to stay on track for your target grade?\nwho in your class you can study with before it's due?\n\nCampusClip has all three.",
     cta="link in bio"
 )
 
-post_meme(
+statement_dark(
     "sep16_assignmentmeme.png",
-    "the assignment is due in 3 days.\nnotes in one app. rubric on Canvas.\nstudy group in 3 different iMessage threads.",
-    "or:\n\nCampusClip.\n\nlink in bio."
+    'notes in one app. rubric on Canvas. study group across 3 iMessage threads. grade calculator open in another tab.',
+    'CampusClip. one app. your notes, your grade, your class, your due dates — all in one place. link in bio.'
 )
 
-post_checklist(
+checklist(
     "sep17_gradetracker_how.png",
-    "how CampusClip's grade tracker works",
+    "how the grade tracker works",
     [
-        "photograph your syllabus → weights auto-populate",
-        "enter your mark as you get assignments back",
-        "CampusClip calculates your weighted grade",
-        "set a target grade — see what you need on every assessment",
-        "always know where you stand. no surprises in December.",
+        "photograph syllabus → weights auto-populate",
+        "enter your mark as you get each assignment back",
+        "CampusClip calculates your weighted grade live",
+        "set a target — see what you need on every assessment",
+        "always know where you stand. no December surprises.",
     ],
     cta="link in bio"
 )
 
-post_light(
+hero_light(
     "sep18_weekendreminder.png",
     "weekend reminder:",
-    "the assignments you have due next week are already in your CampusClip calendar.\n\nno Sunday-night panic trying to remember what's coming up.\n\njust open the app. you already know.",
-    cta="link in bio if you want this for your semester"
+    body="the assignments due next week are already in your CampusClip calendar.\n\nno Sunday-night panic trying to remember what's coming up.\n\njust open the app. you already know.",
+    cta="link in bio if you want this"
 )
 
-post_light(
+split(
     "sep21_threeweeks.png",
     "three weeks in.",
-    "by now you either feel on top of your semester or you don't.\n\nif you don't: the problem is solvable. one app. 15 minutes. your whole semester gets organised.\n\nif you do: tell your friends. someone in your class needs this.",
+    "if you're on top of it — tell your friends.",
+    bottom_body="someone in your class is struggling. send them this. CampusClip. one app. 15 minutes. your whole semester gets organised.",
     cta="link in bio"
 )
 
-print("\n── September: Week 4 (Midterms) ──")
+# ── September Week 4 — Midterms ───────────────────────────────────────────────
 
-post_dark(
+print("\n── September Week 4 (Midterms) ──")
+
+hero_dark(
     "sep22_midtermscoming.png",
     "midterms are coming.",
-    "in 2–3 weeks most Western students will be in full panic mode — scrambling to figure out their grade, what they need to score, and whether they have time to bring it up.\n\nthe students who set up CampusClip in week 1 already know all of this. they've known since September 1st.",
+    body="in 2–3 weeks most Western students will be scrambling to figure out their grade and what they need to score.\n\nthe students who set up CampusClip in week 1 already know all of this. they've known since September 1st.",
     cta="link in bio · still helps"
 )
 
-post_checklist(
+checklist(
     "sep23_midtermprep.png",
     "midterm prep in CampusClip",
     [
-        "Check grade tracker — your exact current grade",
-        "Check midterm weight — is it 20%? 35%? Changes everything",
-        "Check what you need to score to hit your target",
+        "Check your exact current grade in grade tracker",
+        "Check the midterm weight — is it 20%? 35%?",
+        "Check what score you need to hit your target",
         "Post in class feed — find a study group now",
-        "Check what else is due same week as your midterm",
+        "Check what else is due the same week as your midterm",
     ],
-    cta="link in bio — midterm command centre"
+    cta="link in bio"
 )
 
-post_light(
+hero_light(
     "sep24_studygroup.png",
     "the best study groups don't form in week 6.",
-    "they form in week 2.\n\nthe students who joined their class feeds on CampusClip early already have their study groups sorted.\n\nif you haven't found yours yet — go to your class page right now. post 'anyone want to study for the midterm.'\n\nsomeone will respond.",
+    body="they form in week 2.\n\nif you haven't found yours yet — go to your class page right now. post 'anyone want to study for the midterm.'\n\nsomeone will respond.",
     cta="link in bio"
 )
 
-post_meme(
+statement_dark(
     "sep25_midtermmeme.png",
-    "week 4 without CampusClip:\n'do you know what the midterm is worth'\n'no idea check the syllabus'\n'which syllabus'",
-    "week 4 with CampusClip:\nopen app → grade tracker → midterm is 30% → you need 68% → close app"
+    '"do you know what the midterm is worth"\n"no idea check the syllabus"\n"which syllabus"\ncalculating grade manually in notes app',
+    'CampusClip users: open app → grade tracker → midterm is 30% → you need 68% → done. link in bio.'
 )
 
-post_dark(
+hero_dark(
     "sep28_midtermweek.png",
     "midterm week.",
-    "you either know your numbers or you don't.\n\nfor everyone who knows: good luck. you're ready.\n\nfor everyone who doesn't: CampusClip is still here. at least go into your midterms knowing what you need.\n\nit's better than going in blind.",
+    body="you either know your numbers or you don't.\n\nfor everyone who knows: you're ready.\n\nfor everyone who doesn't: CampusClip is still here. at least go into your midterms knowing what you need.",
     cta="link in bio"
 )
 
-post_dark(
+hero_dark(
     "sep30_onemonth.png",
     "one month in.",
-    "if you've been on CampusClip since September 1 — you've had your grades calculated, your classes organised, and your semester in one place.\n\nif you still haven't: October is a great time to start. the second half of the semester is harder.\n\nyou've still got time.",
+    body="if you've been on CampusClip since September 1 — your grades have been calculated, your semester organised, your class connected.\n\nif you still haven't: October is a great time to start. the second half is harder.",
     cta="link in bio"
 )
 
-print(f"\n✅ Done! {len(os.listdir(OUTPUT_DIR))} posts saved to launch/posts/")
-print(f"   Open the folder: {OUTPUT_DIR}")
+count = len(os.listdir(OUTPUT_DIR))
+print(f"\n✅  Done — {count} posts saved to launch/posts/")
