@@ -64,4 +64,5 @@ jobs:
           git add launch/remotion-videos/out/
           git diff --staged --quiet && echo "Nothing to commit" || \
             git commit -m "feat: rendered ${{ github.event.inputs.composition }} video"
+          git pull --rebase origin claude/group-skills-employees-9rORY
           git push origin claude/group-skills-employees-9rORY

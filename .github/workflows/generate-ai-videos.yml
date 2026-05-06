@@ -55,4 +55,5 @@ jobs:
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
           git add launch/ai-images/ launch/ai-videos/ || true
           git diff --staged --quiet && echo "Nothing new to commit" || git commit -m "feat: AI-generated marketing assets (FLUX + Kling)"
+          git pull --rebase origin claude/group-skills-employees-9rORY
           git push origin claude/group-skills-employees-9rORY
