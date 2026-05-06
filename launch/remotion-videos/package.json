@@ -1,0 +1,20 @@
+{
+  "name": "campusclip-remotion-videos",
+  "version": "1.0.0",
+  "scripts": {
+    "render:all": "bash render.sh",
+    "studio": "npx remotion studio src/index.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.291",
+    "@remotion/renderer": "4.0.291",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.291"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.4.0"
+  }
+}
