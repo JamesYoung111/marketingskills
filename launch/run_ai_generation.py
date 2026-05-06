@@ -25,17 +25,32 @@ Path("ai-images").mkdir(exist_ok=True)
 Path("ai-videos").mkdir(exist_ok=True)
 
 SCREENSHOTS_DIR = Path("app-screenshots")
+
+# Screenshots are on main branch with iPhone default names (IMG_XXXX.jpeg).
+# This map translates our logical names to the actual uploaded filenames.
 GITHUB_RAW = (
     "https://raw.githubusercontent.com/JamesYoung111/marketingskills/"
-    "claude/group-skills-employees-9rORY/launch/app-screenshots"
+    "main/launch/app-screenshots"
 )
+SCREENSHOT_MAP = {
+    "screenshot_01_dashboard.png":    "IMG_1617.jpeg",
+    "screenshot_02_class_detail.png": "IMG_1618.jpeg",
+    "screenshot_03_clubs.png":        "IMG_1619.jpeg",
+    "screenshot_04_club_page.png":    "IMG_1620.jpeg",
+    "screenshot_05_feed.png":         "IMG_1621.jpeg",
+    "screenshot_06_calendar.png":     "IMG_1622.jpeg",
+    "screenshot_07_search.png":       "IMG_1623.jpeg",
+    "screenshot_08_profile.png":      "IMG_1624.jpeg",
+}
 
-def screenshot_url(filename):
-    """Return GitHub raw URL for a screenshot (used as Kling start_image)."""
-    return f"{GITHUB_RAW}/{filename}"
+def screenshot_url(logical_name):
+    """Return GitHub raw URL using actual uploaded filename."""
+    actual = SCREENSHOT_MAP.get(logical_name, logical_name)
+    return f"{GITHUB_RAW}/{actual}"
 
-def screenshot_exists(filename):
-    return (SCREENSHOTS_DIR / filename).exists()
+def screenshot_exists(logical_name):
+    actual = SCREENSHOT_MAP.get(logical_name, logical_name)
+    return (SCREENSHOTS_DIR / actual).exists()
 
 def download(url, path):
     urllib.request.urlretrieve(str(url), path)
@@ -515,15 +530,13 @@ def gen_video(item, pause=15):
         "cfg_scale": 0.5,
     }
 
-    # Use real screenshot as starting frame if available
+    # Use real screenshot as starting frame (always use GitHub raw URL —
+    # files are on main branch, not the checked-out feature branch)
     screenshot_file = item.get("start_image")
-    if screenshot_file and screenshot_exists(screenshot_file):
+    if screenshot_file:
         img_url = screenshot_url(screenshot_file)
         input_data["start_image"] = img_url
         print(f"  using start_image: {img_url}", flush=True)
-    elif screenshot_file:
-        print(f"  note: {screenshot_file} not found in app-screenshots/ — generating without start frame", flush=True)
-
     out = run_with_retry("kwaivgi/kling-v1-6-pro", input_data)
     url = str(out) if isinstance(out, str) else str(list(out)[0])
     download(url, item["file"])
