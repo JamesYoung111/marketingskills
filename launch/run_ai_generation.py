@@ -525,19 +525,35 @@ def gen_video(item, pause=15):
 
     input_data = {
         "prompt": item["prompt"],
-        "duration": item.get("duration", 5),
+        "duration": str(item.get("duration", 5)),  # Kling expects string
         "aspect_ratio": "9:16",
         "cfg_scale": 0.5,
+        "negative_prompt": "blurry, low quality, watermark",
     }
 
-    # Use real screenshot as starting frame (always use GitHub raw URL —
-    # files are on main branch, not the checked-out feature branch)
+    # Try start_image — skip if URL fetch fails so generation still proceeds
     screenshot_file = item.get("start_image")
     if screenshot_file:
         img_url = screenshot_url(screenshot_file)
-        input_data["start_image"] = img_url
-        print(f"  using start_image: {img_url}", flush=True)
-    out = run_with_retry("kwaivgi/kling-v1-6-pro", input_data)
+        try:
+            # Verify URL is reachable before passing to Kling
+            import urllib.request as _ur
+            _ur.urlopen(img_url, timeout=8)
+            input_data["start_image"] = img_url
+            print(f"  using start_image: {img_url}", flush=True)
+        except Exception as e:
+            print(f"  start_image unreachable ({e}), generating without it", flush=True)
+
+    # Try current model ID first, fall back to alternate naming
+    for model_id in ["kwaivgi/kling-v1-6-pro", "kwaivgi/kling-v1.6-pro", "kwaivgi/kling-v1-5-pro"]:
+        try:
+            print(f"  trying model: {model_id}", flush=True)
+            out = run_with_retry(model_id, input_data)
+            break
+        except Exception as e:
+            print(f"  model {model_id} failed: {e}", flush=True)
+            if model_id == "kwaivgi/kling-v1-5-pro":
+                raise
     url = str(out) if isinstance(out, str) else str(list(out)[0])
     download(url, item["file"])
     Path(item["file"].replace(".mp4", ".txt")).write_text(item.get("caption", ""))
