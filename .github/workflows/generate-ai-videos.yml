@@ -1,0 +1,53 @@
+name: Generate CampusClip AI Content
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicate_token:
+        description: "Replicate API Token (r8_...)"
+        required: true
+        type: string
+      batch:
+        description: "What to generate"
+        required: true
+        default: "images"
+        type: choice
+        options:
+          - images
+          - lifestyle
+          - product
+          - emotional
+          - all
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install replicate pillow requests
+
+      - name: Run AI generator
+        working-directory: launch
+        env:
+          REPLICATE_API_TOKEN: ${{ github.event.inputs.replicate_token }}
+        run: python3 run_ai_generation.py ${{ github.event.inputs.batch }}
+
+      - name: Commit generated assets
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git add launch/ai-images/ launch/ai-videos/ || true
+          git diff --staged --quiet && echo "Nothing to commit" || git commit -m "feat: AI-generated marketing assets (FLUX + Kling)"
+          git push origin claude/group-skills-employees-9rORY
