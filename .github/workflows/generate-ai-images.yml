@@ -1,0 +1,263 @@
+name: Generate CampusClip AI Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicate_token:
+        description: "Replicate API Token (r8_...)"
+        required: true
+        type: string
+      content_type:
+        description: "What to generate"
+        required: true
+        default: "images"
+        type: choice
+        options:
+          - images
+          - videos
+          - both
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install replicate pillow requests
+
+      - name: Generate AI content
+        env:
+          REPLICATE_API_TOKEN: ${{ github.event.inputs.replicate_token }}
+          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+        run: |
+          cd launch
+          python3 - <<'PYEOF'
+          import os, sys, urllib.request, json, time
+          from pathlib import Path
+
+          import replicate
+
+          content_type = os.environ.get("CONTENT_TYPE", "images")
+
+          OUT_IMG = Path("ai-images")
+          OUT_VID = Path("ai-videos")
+          OUT_IMG.mkdir(exist_ok=True)
+          OUT_VID.mkdir(exist_ok=True)
+
+          STYLE = (
+              "cinematic lighting, shot on iPhone 16 Pro, ultra-detailed, "
+              "8K resolution, social media ad quality, vibrant colors, "
+              "professional photography, sharp focus, natural skin tones"
+          )
+
+          IMAGE_PROMPTS = [
+              {
+                  "filename": "01_student_library.png",
+                  "caption": "Study smarter, not harder 📚",
+                  "prompt": (
+                      "A diverse group of three university students sitting at a modern library table, "
+                      "laughing and looking at a smartphone showing a blue app with grade rings and deadlines. "
+                      "One student wearing a Western University hoodie. "
+                      "Warm ambient library lighting, bookshelves in background, "
+                      "open laptops on table, autumn vibes through window. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "02_scan_syllabus.png",
+                  "caption": "30 seconds and every deadline is saved 🗓️",
+                  "prompt": (
+                      "Close-up of a university student's hands holding a white iPhone, "
+                      "phone screen showing a blue-gradient app scanning a printed course syllabus. "
+                      "Student sitting at a wooden desk, coffee cup nearby, campus notebook visible. "
+                      "Clean natural window light, shallow depth of field, bokeh background. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "03_celebration_grades.png",
+                  "caption": "That feeling when the grade hits different ✨",
+                  "prompt": (
+                      "Happy 20-year-old female university student looking at her phone, "
+                      "big genuine smile, fist pump gesture, sitting outside on university campus steps. "
+                      "Phone screen shows '91% — Great job!' in a blue gradient app. "
+                      "Golden hour sunlight, leafy campus background, casual student fashion. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "04_campus_flatlay.png",
+                  "caption": "Your new semester starter pack 🎓",
+                  "prompt": (
+                      "Overhead flat lay shot of a MacBook, iPhone showing a blue social app feed, "
+                      "university branded items, pencils, notebook, stickers, iced coffee, AirPods "
+                      "on a light wood desk. Aesthetic student workspace, Instagram-worthy composition. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "05_night_study.png",
+                  "caption": "Deadlines don't sneak up on you anymore 🌙",
+                  "prompt": (
+                      "University student studying late at night in dorm room, "
+                      "phone propped up showing deadline alerts glowing in blue, "
+                      "fairy lights in background, textbooks stacked, laptop open, "
+                      "cozy warm lamp light contrasting with cool phone screen glow. "
+                      "Moody cinematic atmosphere, intimate dorm room setting. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "06_campus_walk.png",
+                  "caption": "Campus life, all in one place 🍂",
+                  "prompt": (
+                      "Stylish university student walking across a beautiful autumn campus, "
+                      "checking phone while walking, phone screen visible showing an events feed app. "
+                      "Red and orange maple leaves, gothic university architecture in background, "
+                      "blue sky, natural movement, lifestyle photography feel. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "07_friend_group_cafe.png",
+                  "caption": "Your whole class on one app 🤝",
+                  "prompt": (
+                      "Four diverse university students in a campus café, "
+                      "all looking at one student's phone screen showing a blue group chat. "
+                      "Everyone laughing and reacting, casual outfits, coffee cups, "
+                      "warm café lighting, brick walls, authentic candid moment feel. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "08_phone_hero_mockup.png",
+                  "caption": "Meet your new campus companion 📱",
+                  "prompt": (
+                      "Ultra-realistic iPhone 16 Pro mockup floating against a deep navy blue background, "
+                      "phone screen showing a beautiful blue gradient app with circular grade rings 87 percent 72 percent 91 percent, "
+                      "glassmorphism cards, clean typography. "
+                      "Dramatic studio lighting from above, subtle lens flare, "
+                      "phone casting a soft blue glow shadow below. "
+                      "Product photography style, advertising campaign quality. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "09_before_after.png",
+                  "caption": "Before vs After CampusClip 🔄",
+                  "prompt": (
+                      "Split composition: left side shows scattered papers, stressed student, alarm clocks, "
+                      "red urgent notifications chaos; right side shows same student now calm and smiling, "
+                      "organized phone app with all deadlines sorted, blue peaceful tones. "
+                      "Bold visual contrast between chaos and calm. Modern editorial style. " + STYLE
+                  ),
+              },
+              {
+                  "filename": "10_graduation.png",
+                  "caption": "This is what organised looks like 🎓",
+                  "prompt": (
+                      "University student in graduation cap and gown, holding diploma, "
+                      "triumphant expression, beautiful campus in golden hour background, "
+                      "confetti falling, holding phone showing a '4.0 GPA achieved!' blue notification. "
+                      "Aspirational, emotional, cinematic graduation photo. Warm golden tones. " + STYLE
+                  ),
+              },
+          ]
+
+          VIDEO_PROMPTS = [
+              {
+                  "filename": "v01_syllabus_scan.mp4",
+                  "prompt": (
+                      "University student picks up a printed syllabus and holds it in front of phone camera. "
+                      "Phone screen shows a scanning animation with blue progress bar filling, "
+                      "then displays organized list of deadlines with checkmarks appearing. "
+                      "Clean satisfying UI animation, natural lighting, shallow depth of field."
+                  ),
+              },
+              {
+                  "filename": "v02_grade_reveal.mp4",
+                  "prompt": (
+                      "Close up of phone screen showing grade tracker app, "
+                      "numbers animating upward, GPA ticking from 3.2 to 3.8, "
+                      "circular progress rings filling with glowing blue light. "
+                      "Phone slowly pulls back to reveal student smiling in campus café. "
+                      "Satisfying, clean, motivational mood."
+                  ),
+              },
+              {
+                  "filename": "v03_campus_lifestyle.mp4",
+                  "prompt": (
+                      "Student walking through autumn university campus checking phone app, "
+                      "close-up of app screen showing events feed, "
+                      "cuts to student joining study group. "
+                      "Dynamic energetic modern lifestyle feel, golden hour lighting."
+                  ),
+              },
+          ]
+
+          def download(url, path):
+              urllib.request.urlretrieve(url, path)
+
+          def generate_image(p, i, total):
+              print(f"[{i}/{total}] {p['filename']} ...", flush=True)
+              output = replicate.run(
+                  "black-forest-labs/flux-1.1-pro",
+                  input={
+                      "prompt": p["prompt"],
+                      "aspect_ratio": "9:16",
+                      "output_format": "png",
+                      "output_quality": 100,
+                      "safety_tolerance": 2,
+                      "prompt_upsampling": True,
+                  }
+              )
+              path = OUT_IMG / p["filename"]
+              download(str(output), path)
+              Path(str(path).replace(".png", ".txt")).write_text(p.get("caption", ""))
+              print(f"  ✓ saved", flush=True)
+
+          def generate_video(p, i, total):
+              print(f"[{i}/{total}] {p['filename']} ...", flush=True)
+              output = replicate.run(
+                  "kwaivgi/kling-v1-5",
+                  input={
+                      "prompt": p["prompt"],
+                      "duration": 5,
+                      "aspect_ratio": "9:16",
+                      "cfg_scale": 0.5,
+                  }
+              )
+              path = OUT_VID / p["filename"]
+              url = str(output) if isinstance(output, str) else str(list(output)[0])
+              download(url, path)
+              print(f"  ✓ saved", flush=True)
+
+          if content_type in ("images", "both"):
+              print(f"\n── Generating {len(IMAGE_PROMPTS)} images ──", flush=True)
+              for i, p in enumerate(IMAGE_PROMPTS, 1):
+                  try:
+                      generate_image(p, i, len(IMAGE_PROMPTS))
+                  except Exception as e:
+                      print(f"  ✗ {e}", flush=True)
+
+          if content_type in ("videos", "both"):
+              print(f"\n── Generating {len(VIDEO_PROMPTS)} video clips ──", flush=True)
+              for i, p in enumerate(VIDEO_PROMPTS, 1):
+                  try:
+                      generate_video(p, i, len(VIDEO_PROMPTS))
+                  except Exception as e:
+                      print(f"  ✗ {e}", flush=True)
+
+          print("\nAll done!", flush=True)
+          PYEOF
+
+      - name: Commit generated assets to repo
+        run: |
+          git config user.email "campusclip-bot@github-actions.com"
+          git config user.name "CampusClip AI Generator"
+          git add launch/ai-images/ launch/ai-videos/ || true
+          git diff --staged --quiet || git commit -m "feat: AI-generated marketing assets via GitHub Actions"
+          git push origin claude/group-skills-employees-9rORY
