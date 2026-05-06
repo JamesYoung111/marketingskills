@@ -29,104 +29,323 @@ def run_with_retry(model, input_data, retries=4):
                 raise
     raise RuntimeError(f"Failed after {retries} retries")
 
+
+def add_branding_overlay(img_path, feature_name, headline, cta="Free Download · August 2026"):
+    """Composite CampusClip branding onto a generated image using PIL."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("  PIL not available, skipping overlay", flush=True)
+        return
+
+    img = Image.open(img_path).convert("RGBA")
+    w, h = img.size
+
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Dark gradient at bottom third
+    grad_h = int(h * 0.42)
+    for i in range(grad_h):
+        alpha = int(215 * (i / grad_h) ** 1.4)
+        y = h - grad_h + i
+        draw.rectangle([(0, y), (w, y + 1)], fill=(8, 18, 38, alpha))
+
+    # Try system fonts, fallback gracefully
+    def load_font(size, bold=True):
+        candidates = [
+            f"/usr/share/fonts/truetype/dejavu/DejaVuSans-{'Bold' if bold else ''}.ttf",
+            f"/usr/share/fonts/truetype/liberation/LiberationSans-{'Bold' if bold else 'Regular'}.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf" if bold else "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        ]
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    pad = int(w * 0.075)
+    base_y = h - grad_h + int(grad_h * 0.12)
+
+    # CampusClip wordmark — electric blue
+    font_brand = load_font(int(w * 0.075))
+    draw.text((pad, base_y), "CampusClip", fill=(91, 158, 248, 255), font=font_brand)
+
+    # Feature name — white
+    font_feature = load_font(int(w * 0.052))
+    draw.text((pad, base_y + int(w * 0.095)), feature_name, fill=(255, 255, 255, 240), font=font_feature)
+
+    # Headline — soft blue-white
+    font_sub = load_font(int(w * 0.038), bold=False)
+    draw.text((pad, base_y + int(w * 0.165)), headline, fill=(180, 205, 245, 210), font=font_sub)
+
+    # CTA pill button
+    btn_y = h - int(h * 0.085)
+    btn_w = int(w * 0.72)
+    btn_h = int(h * 0.062)
+    draw.rounded_rectangle(
+        [(pad, btn_y), (pad + btn_w, btn_y + btn_h)],
+        radius=btn_h // 2,
+        fill=(64, 64, 242, 220),
+    )
+    font_cta = load_font(int(w * 0.038))
+    # Center text in button
+    try:
+        bbox = draw.textbbox((0, 0), cta, font=font_cta)
+        txt_w = bbox[2] - bbox[0]
+    except Exception:
+        txt_w = len(cta) * int(w * 0.022)
+    draw.text(
+        (pad + (btn_w - txt_w) // 2, btn_y + (btn_h - int(w * 0.045)) // 2),
+        cta, fill=(255, 255, 255, 255), font=font_cta,
+    )
+
+    img = Image.alpha_composite(img, overlay).convert("RGB")
+    img.save(img_path, quality=97)
+    print(f"  branding overlay composited -> {img_path}", flush=True)
+
+
+# ── Prompt style suffix ───────────────────────────────────────────────────────
 STYLE = (
-    "cinematic lighting, shot on iPhone 16 Pro, ultra-detailed, "
-    "8K resolution, social media ad quality, vibrant colors, "
-    "professional photography, sharp focus, natural skin tones"
+    "cinematic lighting, ultra-detailed, 8K resolution, "
+    "social media ad quality, vibrant colors, professional photography, "
+    "sharp focus, hyperrealistic"
 )
 
+# ── Image prompts ─────────────────────────────────────────────────────────────
+# Every prompt shows CampusClip's actual UI on the phone screen.
 IMAGES = [
     {
-        "file": "ai-images/img_01_library.png",
-        "caption": "Study smarter, not harder 📚",
-        "prompt": "Three diverse university students at a modern library table laughing at a smartphone showing a blue grade-tracking app. Western University hoodies, warm amber lighting, open MacBooks, autumn leaves through floor-to-ceiling windows. Shot on Sony A7IV, f/1.8, golden hour, hyperrealistic, Vogue editorial quality, 8K. " + STYLE,
+        "file": "ai-images/img_01_grade_rings.png",
+        "feature": "Grade Tracker",
+        "headline": "Watch your GPA update live.",
+        "caption": "Know your grade before it's too late 📊",
+        "prompt": (
+            "Extreme close-up of an iPhone 16 Pro screen held by a student, the screen shows the "
+            "CampusClip grade tracker app: dark navy background, three glowing circular progress "
+            "rings — the first labeled 'CS 2211' filled 87% in electric blue, the second 'MATH 1600' "
+            "at 72% in amber orange, the third 'BIOL 1290' at 91% in teal, the word 'CampusClip' "
+            "in white text at the top of the screen, and a glassmorphism card showing 'Current GPA 3.7'. "
+            "Shallow depth of field, university library bokeh in background, warm amber lighting. "
+            + STYLE
+        ),
     },
     {
         "file": "ai-images/img_02_syllabus_scan.png",
+        "feature": "Syllabus Scanner",
+        "headline": "Drop your PDF. Every deadline saved.",
         "caption": "Every deadline. Auto-saved. 🗓️",
-        "prompt": "Extreme close-up of elegant hands holding iPhone 16 Pro, screen shows a blue glassmorphism app scanning a university syllabus PDF with animated progress bar. Shallow depth of field, bokeh wooden desk background, ceramic espresso cup, morning light streaming through window. Product photography, hyperrealistic, 8K. " + STYLE,
+        "prompt": (
+            "Close-up of iPhone screen showing the CampusClip app's syllabus scanner feature: "
+            "a university course syllabus PDF is displayed, an animated blue progress bar sweeps "
+            "across the screen, bold text reads 'Found 12 deadlines' in white, below it a clean "
+            "checklist of assignments auto-populates — 'Essay #1 · Oct 14', 'Midterm · Oct 21', "
+            "'Lab Report · Nov 3' — each with a blue checkbox. 'CampusClip' logo visible top-left "
+            "in the app. Hands holding phone over textbooks, morning light, marble desk. "
+            + STYLE
+        ),
     },
     {
-        "file": "ai-images/img_03_grade_celebration.png",
-        "caption": "That feeling when the grade hits different ✨",
-        "prompt": "A joyful 21-year-old female student mid-laugh, eyes closed, fist pumped, sitting on sunlit university steps. Phone shows 91 percent Excellent in a blue gradient app. Golden hour backlight creates a halo effect, autumn leaves falling, Western University stone architecture. Candid lifestyle photography, hyperrealistic, 8K, shot on Leica. " + STYLE,
+        "file": "ai-images/img_03_deadline_alert.png",
+        "feature": "Deadline Calendar",
+        "headline": "3 days early. Every time.",
+        "caption": "Deadlines don't sneak up anymore 🔔",
+        "prompt": (
+            "iPhone screen glowing in a cozy university dorm room at night, showing a CampusClip "
+            "push notification: a glassmorphism card with the CampusClip logo and the text "
+            "'CS 2211 Essay due in 3 days — you're on track ✓' in white on dark navy background, "
+            "with a blue gradient accent. Student hand reaching for the phone, warm fairy lights "
+            "and Edison bulbs in background, cozy moody atmosphere. "
+            + STYLE
+        ),
     },
     {
-        "file": "ai-images/img_04_flatlay.png",
-        "caption": "Your semester starter pack 🎓",
-        "prompt": "Overhead flatlay: iPhone showing a beautiful blue gradient student app, open MacBook Pro, matcha latte with latte art, fresh white AirPods, Muji pens, leather notebook with sticky notes, university planner. Marble white desk, perfect lighting, Instagram aesthetic, hyperrealistic, 8K. " + STYLE,
-    },
-    {
-        "file": "ai-images/img_05_night_dorm.png",
-        "caption": "Deadlines don't sneak up anymore 🌙",
-        "prompt": "University student in cozy dorm room at 11pm, warm fairy lights and Edison bulb glow, phone screen emitting soft blue light showing deadline alerts, textbooks open, half-eaten snack. Cinematic chiaroscuro lighting, moody intimate atmosphere. Shot on Canon R5, hyperrealistic, 8K. " + STYLE,
-    },
-    {
-        "file": "ai-images/img_06_campus_walk.png",
-        "caption": "Campus life, one app 🍂",
-        "prompt": "Stylish male student mid-stride on a stunning autumn university campus path, laughing while checking phone, fallen maple leaves swirling. Gothic stone buildings, vibrant orange-red foliage, cinematic depth. Shot from slightly low angle, f/2.0, bokeh background, golden hour, hyperrealistic, 8K. " + STYLE,
-    },
-    {
-        "file": "ai-images/img_07_study_group.png",
+        "file": "ai-images/img_04_class_community.png",
+        "feature": "Class Communities",
+        "headline": "Your whole class. One place.",
         "caption": "Your whole class, connected 🤝",
-        "prompt": "Four diverse students in a warmly-lit campus cafe, all reacting with delight to something on one phone screen. Latte cups, MacBooks, authentic laughter, casual streetwear. Warm Edison bulb ambience, exposed brick, hyperrealistic candid photography, 8K. " + STYLE,
+        "prompt": (
+            "iPhone showing the CampusClip 'Class Communities' feature: a chat interface for "
+            "'CS 2211 — Computer Science' with student message bubbles, one message reading "
+            "'Does anyone have notes from lecture 5?', another replying 'Posted in files! 📎', "
+            "a shared document thumbnail, emoji reactions, and a pinned study poll. "
+            "CampusClip logo at top of screen. Four diverse students huddle around the phone "
+            "in a warmly-lit campus cafe, reacting with genuine excitement. "
+            + STYLE
+        ),
     },
     {
-        "file": "ai-images/img_08_phone_hero.png",
+        "file": "ai-images/img_05_events_feed.png",
+        "feature": "Events & Clubs",
+        "headline": "Everything at Western. In one feed.",
+        "caption": "Campus life, one app 🎉",
+        "prompt": (
+            "iPhone screen showing the CampusClip Events & Clubs feed: a beautiful scrollable "
+            "list of campus events with colorful thumbnails — 'Engineering Networking Night 🔧', "
+            "'Pre-Med Study Group 🩺', 'Western Career Fair 💼', 'Club Crawl 🎉' — each card "
+            "with a vivid image, date chip, and blue 'RSVP' button. CampusClip header at top. "
+            "Stylish student walking through autumn Western University campus holding phone, "
+            "gothic stone buildings, golden hour maple leaves. "
+            + STYLE
+        ),
+    },
+    {
+        "file": "ai-images/img_06_hero_dashboard.png",
+        "feature": "All-In-One Campus App",
+        "headline": "Your campus, organised.",
         "caption": "Meet your campus companion 📱",
-        "prompt": "iPhone 16 Pro in titanium finish floating at an angle against deep midnight blue background with subtle particle bokeh, screen showing a stunning blue gradient app with three animated circular grade rings 87 percent 72 percent 91 percent and glassmorphism cards. Dramatic rim lighting, caustic light reflections on desk surface. Apple-style product photography, hyperrealistic, 8K. " + STYLE,
+        "prompt": (
+            "iPhone 16 Pro in titanium finish floating at a slight angle, screen showing the "
+            "CampusClip home dashboard: dark navy background with five glassmorphism feature "
+            "tiles arranged in a grid — '📚 Syllabus Scanner', '📊 Grade Tracker', "
+            "'📅 Deadlines', '🏫 Communities', '🎉 Events' — each tile with a blue gradient "
+            "icon, the 'CampusClip' wordmark in large white text at the top with a blue gradient "
+            "logo mark. Dramatic product photography, midnight blue background, subtle particle "
+            "bokeh, Apple-style rim lighting. "
+            + STYLE
+        ),
     },
     {
-        "file": "ai-images/img_09_relief_moment.png",
+        "file": "ai-images/img_07_before_after.png",
+        "feature": "Stop the Chaos",
+        "headline": "Everything changes when you're organised.",
         "caption": "No more deadline panic. Ever. 😮‍💨",
-        "prompt": "Split scene: left half moody red tones showing a stressed student with scattered papers, red notification alerts, overwhelmed expression; right half calm blue tones, same student relaxed and smiling at organized app screen. Perfect symmetry, graphic editorial style, hyperrealistic, 8K. " + STYLE,
+        "prompt": (
+            "Perfect split-screen image: LEFT HALF — moody red-orange tones, stressed student "
+            "at cluttered desk buried in scattered papers and sticky notes, red alert notifications "
+            "on phone, overwhelmed expression, messy background; RIGHT HALF — calm cool blue tones, "
+            "same student relaxed and smiling, phone showing CampusClip clean deadline list with "
+            "blue checkmarks and 'All on track ✓' in white text, organized clean desk. "
+            "Graphic editorial style, perfect symmetry, hyperrealistic, 8K. "
+            + STYLE
+        ),
     },
     {
-        "file": "ai-images/img_10_graduation.png",
+        "file": "ai-images/img_08_study_success.png",
+        "feature": "Grade Tracker",
+        "headline": "See every mark. Know every grade.",
+        "caption": "That feeling when the grade hits different ✨",
+        "prompt": (
+            "Joyful 21-year-old female student mid-celebration on sunlit university steps, "
+            "eyes wide with delight, fist pumped in the air. Her phone screen clearly shows "
+            "the CampusClip grade tracker app: a large '91%' in blue gradient text, 'BIOL 1290 — Excellent' "
+            "below it, a glowing circular ring at 91% fill. Golden hour backlight, autumn leaves "
+            "falling, Western University stone architecture. Candid lifestyle, hyperrealistic, 8K. "
+            + STYLE
+        ),
+    },
+    {
+        "file": "ai-images/img_09_study_flatlay.png",
+        "feature": "The Student Starter Pack",
+        "headline": "One app. Your whole semester.",
+        "caption": "Your semester starter pack 🎓",
+        "prompt": (
+            "Perfectly styled overhead flatlay on a white marble desk: iPhone prominently "
+            "centered showing CampusClip app with blue gradient interface and the text "
+            "'CampusClip — 5 deadlines this week', open MacBook Pro showing class notes, "
+            "matcha latte with latte art, fresh white AirPods, Muji pens, leather notebook "
+            "with 'CS 2211' tab. Magazine quality Instagram aesthetic, soft natural light, "
+            "hyperrealistic, 8K. "
+            + STYLE
+        ),
+    },
+    {
+        "file": "ai-images/img_10_gpa_graduation.png",
+        "feature": "Organised Students Graduate Differently",
+        "headline": "Start organised. Graduate proud.",
         "caption": "Organised students graduate differently 🎓",
-        "prompt": "University graduate in cap and gown, holding diploma triumphantly overhead, brilliant smile, campus quad in golden hour, confetti mid-air. Phone in other hand shows 3.9 GPA Congratulations blue notification. Cinematic aspiration, emotional, shot on RED camera, hyperrealistic, 8K. " + STYLE,
+        "prompt": (
+            "University graduate in cap and gown holding diploma triumphantly overhead, "
+            "brilliant smile, campus quad in golden hour, confetti mid-air. "
+            "Phone in other hand clearly shows the CampusClip app: "
+            "'Final GPA: 3.9 — Congratulations! 🎉' in large white text on dark navy background "
+            "with blue gradient celebration animation. Cinematic aspiration, emotional, "
+            "shot on RED camera, hyperrealistic, 8K. "
+            + STYLE
+        ),
     },
 ]
 
+# ── Video prompts ─────────────────────────────────────────────────────────────
 LIFESTYLE_VIDEOS = [
     {
-        "file": "ai-videos/v01_campus_golden_hour.mp4",
-        "caption": "Western never looked this good 🌅",
+        "file": "ai-videos/v01_campus_check.mp4",
+        "caption": "Check your deadlines before your next class 📱",
         "duration": 5,
-        "prompt": "Cinematic slow-motion shot of a beautiful university campus at golden hour. Students walking through fallen autumn leaves, soft bokeh lights, stone gothic architecture glowing warm amber. Camera slowly pushes forward at eye level. Film grain, anamorphic lens flare, 24fps cinematic. Dreamlike, aspirational, like an Apple ad.",
+        "prompt": (
+            "Cinematic tracking shot alongside a confident stylish student walking through "
+            "a stunning autumn university campus at golden hour. She glances at her iPhone "
+            "showing the CampusClip app — the screen shows a blue deadline list with green "
+            "checkmarks. Camera slowly orbits her as she smiles at the screen. Maple leaves "
+            "falling, gothic stone buildings, anamorphic bokeh, 24fps cinematic, like an Apple ad."
+        ),
     },
     {
-        "file": "ai-videos/v02_library_study.mp4",
-        "caption": "This is your era 📚",
+        "file": "ai-videos/v02_library_syllabus.mp4",
+        "caption": "Scan your syllabus. Never miss a thing 📚",
         "duration": 5,
-        "prompt": "Slow dolly shot through a beautiful university library at golden hour. Students at wooden tables, soft warm light through tall windows, books and MacBooks open, one student smiles looking at phone screen. Camera glides smoothly past each study spot. Cinematic, warm, aspirational, like a Netflix opening scene.",
+        "prompt": (
+            "Slow dolly shot through a beautiful university library. We see a student hold up "
+            "their iPhone camera to their printed syllabus. On the phone screen the CampusClip "
+            "app shows a blue progress bar scanning the document, then a satisfying animation "
+            "as 12 deadlines appear in a clean checklist. Student exhales with visible relief "
+            "and smiles. Warm golden library light, cinematic, smooth camera motion."
+        ),
     },
     {
-        "file": "ai-videos/v03_friend_energy.mp4",
-        "caption": "Built for your campus 🎉",
+        "file": "ai-videos/v03_group_reaction.mp4",
+        "caption": "Your class is already on CampusClip 🤝",
         "duration": 5,
-        "prompt": "A group of four diverse university students burst into laughter around a cafe table, one shows something on their phone to the others, genuine reactions of surprise and joy. Camera slowly orbits the group. Warm cafe lighting, dynamic energy, authentic candid feel. Shot on 35mm, shallow depth of field, cinematic.",
+        "prompt": (
+            "Four diverse university students burst into surprised laughter around a cafe table. "
+            "One shows their phone to the group — the screen shows CampusClip class community chat "
+            "with messages and shared notes from their CS class. Others lean in, reacting with "
+            "genuine delight. Camera slowly orbits the group. Warm cafe Edison lighting, "
+            "authentic candid energy, cinematic 35mm shallow depth of field."
+        ),
     },
 ]
 
 PRODUCT_VIDEOS = [
     {
-        "file": "ai-videos/v04_app_reveal.mp4",
-        "caption": "30 seconds. Every deadline saved. 📲",
+        "file": "ai-videos/v04_syllabus_demo.mp4",
+        "caption": "Your syllabus → every deadline in 30 seconds 📲",
         "duration": 5,
-        "prompt": "Elegant close-up of an iPhone screen showing a blue glassmorphism app interface. A finger taps to scan a document, a satisfying progress bar fills with blue light, then a list of organized deadlines appears with smooth checkmark animations. Camera slowly pulls back to reveal the phone resting on a marble desk. Product demo, Apple aesthetic, hyperrealistic, satisfying UX animation feel.",
+        "prompt": (
+            "Elegant screen-recording style close-up of an iPhone showing the CampusClip app. "
+            "A finger taps 'Scan Syllabus', the camera opens, a university course syllabus PDF "
+            "appears, a blue progress bar sweeps across with a satisfying animation, then a "
+            "clean list of deadlines populates: 'Essay #1 · Oct 14', 'Midterm · Oct 21'. "
+            "Each item has a blue checkbox. CampusClip logo visible at top. "
+            "Camera slowly pulls back to reveal phone on marble desk. Apple product aesthetic."
+        ),
     },
     {
-        "file": "ai-videos/v05_grade_tracker.mp4",
-        "caption": "Watch your GPA climb 📊",
+        "file": "ai-videos/v05_grade_tracker_demo.mp4",
+        "caption": "Watch your GPA update in real time 📊",
         "duration": 5,
-        "prompt": "Macro close-up of a phone screen: three circular grade ring charts animate from 0 percent filling up to 87 72 91 percent with glowing blue and orange arcs. GPA number counts upward from 2.9 to 3.8 with smooth easing. Screen has dark navy background with glassmorphism card elements. Satisfying, clean, the animation feels like Apple own UI. Camera slowly zooms in.",
+        "prompt": (
+            "Macro close-up of iPhone screen showing CampusClip grade tracker. Three circular "
+            "progress rings animate from 0% filling smoothly up to 87%, 72%, and 91% with "
+            "glowing blue, orange, and teal arcs. Below each ring the course code appears. "
+            "A GPA counter ticks upward from 2.9 to 3.7 with smooth easing. Screen shows "
+            "'CampusClip' wordmark at top on dark navy background. Satisfying, clean animation, "
+            "Apple UI aesthetic. Camera slowly zooms in on the screen."
+        ),
     },
     {
-        "file": "ai-videos/v06_notification_relief.mp4",
-        "caption": "3 days early. Every time. 🔔",
+        "file": "ai-videos/v06_notification.mp4",
+        "caption": "3 days early. Every assignment. 🔔",
         "duration": 5,
-        "prompt": "Close up of a sleeping student nightstand. Phone screen lights up with a gentle blue notification: Assignment due in 3 days you are on track. Student hand reaches and picks up phone, we see their face relax into a smile in soft morning light. Cinematic, warm, intimate. Camera slowly rises from nightstand level to face level.",
+        "prompt": (
+            "Close-up of a student nightstand in the early morning. Phone screen gently lights up "
+            "with a CampusClip notification card: blue gradient background, white text reads "
+            "'CS 2211 Essay due in 3 days — You're on track ✓ · CampusClip'. "
+            "A student hand slowly reaches over and picks up the phone, we see their sleepy face "
+            "relax into a relieved smile in soft morning light. "
+            "Camera slowly rises from nightstand level to eye level. Warm, intimate, cinematic."
+        ),
     },
 ]
 
@@ -135,21 +354,43 @@ EMOTIONAL_VIDEOS = [
         "file": "ai-videos/v07_transformation.mp4",
         "caption": "Everything changes when you're organised 🙌",
         "duration": 5,
-        "prompt": "A transformation: student sitting at cluttered chaotic desk with scattered papers and empty coffee cups, looking stressed. Scene cross-dissolves to the same student at a clean organized desk, calm expression, phone showing a beautiful blue app, sunlight streaming in. The whole mood shifts from anxious to peaceful. Cinematic, emotional, like a meditation app ad.",
+        "prompt": (
+            "A transformation story: student sitting at a chaotic desk covered in scattered papers, "
+            "highlighted calendar, multiple missed notifications — stressed and overwhelmed. "
+            "The scene dissolves to the same student at a clean desk, calm and confident, "
+            "holding their phone showing the CampusClip deadline list with blue checkmarks and "
+            "'All assignments on track'. Whole room mood shifts from anxious red tones to calm "
+            "cool blue. Cinematic cross-dissolve, emotional, like a meditation app ad."
+        ),
     },
     {
-        "file": "ai-videos/v08_campus_walk_reel.mp4",
+        "file": "ai-videos/v08_campus_confidence.mp4",
         "caption": "Your campus. Your app. Your era. 🍂",
         "duration": 10,
-        "prompt": "Stylish female student walking confidently through a stunning autumn university campus. Camera tracks alongside at shoulder level. She glances at her phone with a satisfied smile, maple leaves falling around her, stone buildings in golden background. Slow motion at moments, then real-time. Cinematic, aspirational, like an iPhone commercial. 24fps, anamorphic bokeh.",
+        "prompt": (
+            "Stylish female student walking confidently through a stunning autumn Western University "
+            "campus, gothic stone buildings in golden background, maple leaves falling. Camera tracks "
+            "alongside at shoulder level. She checks her iPhone — screen shows CampusClip home "
+            "dashboard with 'No deadlines due today ✓' in blue. She smiles and walks taller. "
+            "Slow motion moments mixed with real-time. Cinematic, aspirational, iPhone commercial feel. "
+            "24fps, anamorphic bokeh."
+        ),
     },
     {
-        "file": "ai-videos/v09_graduation_dream.mp4",
+        "file": "ai-videos/v09_graduation.mp4",
         "caption": "Organised students graduate differently 🎓",
         "duration": 10,
-        "prompt": "Emotional slow-motion of a university graduation ceremony. Graduate walks across stage, receives diploma, turns and pumps fist, crowd cheers. Confetti falls in slow motion. Phone in hand shows 3.9 GPA Congratulations notification. Golden sunlight, caps flying through the air. Cinematic, emotional, swelling energy. Like a university commercial.",
+        "prompt": (
+            "Emotional slow-motion of a university graduation ceremony. Graduate walks across stage, "
+            "receives diploma, turns and raises it overhead — pure joy. In their other hand, phone "
+            "shows CampusClip: 'Final GPA 3.9 — Congratulations! 🎉' on a blue gradient card. "
+            "Crowd cheers in slow motion, confetti falls through golden sunlight, caps fly. "
+            "Camera cuts between the diploma moment and the glowing phone screen. "
+            "Cinematic, emotional, swelling energy, like a university commercial."
+        ),
     },
 ]
+
 
 def gen_image(item, pause=12):
     print(f"\nGenerating image: {item['file']}", flush=True)
@@ -165,9 +406,16 @@ def gen_image(item, pause=12):
         }
     )
     download(str(out), item["file"])
+    # Composite CampusClip branding on top
+    add_branding_overlay(
+        item["file"],
+        feature_name=item.get("feature", "CampusClip"),
+        headline=item.get("headline", ""),
+    )
     Path(item["file"].replace(".png", ".txt")).write_text(item.get("caption", ""))
     print(f"  waiting {pause}s to respect rate limit...", flush=True)
     time.sleep(pause)
+
 
 def gen_video(item, pause=15):
     print(f"\nGenerating video: {item['file']} ({item.get('duration', 5)}s)", flush=True)
@@ -185,6 +433,7 @@ def gen_video(item, pause=15):
     Path(item["file"].replace(".mp4", ".txt")).write_text(item.get("caption", ""))
     print(f"  waiting {pause}s to respect rate limit...", flush=True)
     time.sleep(pause)
+
 
 batches = {
     "images":    (IMAGES, []),
