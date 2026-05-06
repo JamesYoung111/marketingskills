@@ -1,0 +1,67 @@
+name: Render CampusClip Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      composition:
+        description: "Which video to render"
+        required: true
+        default: "LaunchCountdown"
+        type: choice
+        options:
+          - LaunchCountdown
+          - LaunchHero
+          - StatReveal
+          - FeatureReel
+          - GradeTracker
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: launch/remotion-videos
+        run: npm install
+
+      - name: Install Chrome for Remotion
+        working-directory: launch/remotion-videos
+        run: npx remotion browser ensure
+
+      - name: Create output directory
+        run: mkdir -p launch/remotion-videos/out
+
+      - name: Render video
+        working-directory: launch/remotion-videos
+        run: |
+          npx remotion render \
+            ${{ github.event.inputs.composition }} \
+            out/${{ github.event.inputs.composition }}.mp4 \
+            --gl=swangle \
+            --codec=h264 \
+            --log=verbose
+
+      - name: Commit rendered video
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
+          git add launch/remotion-videos/out/
+          git diff --staged --quiet && echo "Nothing to commit" || \
+            git commit -m "feat: rendered ${{ github.event.inputs.composition }} video"
+          git push origin claude/group-skills-employees-9rORY
