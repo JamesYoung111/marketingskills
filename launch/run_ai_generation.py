@@ -15,7 +15,7 @@ App UI reference (from real screenshots):
 - Clubs: blue/purple gradient "Create Club" button, orange "Join" buttons
 - Feed: social post cards with like/comment counts
 """
-import os, sys, time, urllib.request, base64
+import os, sys, time, urllib.request, base64, subprocess
 from pathlib import Path
 import replicate
 
@@ -139,6 +139,76 @@ def add_branding_overlay(img_path, feature_name, headline, cta="Free Download ·
     img = Image.alpha_composite(img, overlay).convert("RGB")
     img.save(img_path, quality=97)
     print(f"  branding overlay composited -> {img_path}", flush=True)
+
+
+def frames_to_video(frame_files, output_path, fps=24, dur=2.8, fade=0.45):
+    """Assemble PNG frames into a 9:16 MP4 with crossfade transitions via ffmpeg."""
+    n = len(frame_files)
+    scale = (
+        "scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+        f"fps={fps}"
+    )
+    parts = [f"[{i}:v]{scale}[v{i}]" for i in range(n)]
+    prev = "[v0]"
+    for i in range(1, n):
+        offset = round(dur * i - fade * i, 3)
+        label = "[out]" if i == n - 1 else f"[xf{i}]"
+        parts.append(f"{prev}[v{i}]xfade=transition=fade:duration={fade}:offset={offset}{label}")
+        prev = f"[xf{i}]"
+    if n == 1:
+        parts.append("[v0]copy[out]")
+
+    inputs = []
+    for fp in frame_files:
+        inputs += ["-loop", "1", "-t", str(dur + 1), "-i", str(fp)]
+
+    total = round(dur * n - fade * (n - 1), 2)
+    cmd = [
+        "ffmpeg", "-y", *inputs,
+        "-filter_complex", "; ".join(parts),
+        "-map", "[out]",
+        "-t", str(total),
+        "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        print(f"  ffmpeg error:\n{r.stderr[-1200:]}", flush=True)
+        raise RuntimeError("ffmpeg assembly failed")
+    print(f"  assembled {n} frames -> {output_path} ({total:.1f}s)", flush=True)
+
+
+def gen_video_slideshow(item, pause=10):
+    """Generate a video: 3 FLUX keyframes + ffmpeg crossfade assembly."""
+    out_mp4 = item["file"]
+    frames = item.get("frames", [])
+    if not frames:
+        print(f"  no frames defined for {out_mp4}", flush=True)
+        return
+    print(f"\nGenerating slideshow: {out_mp4} ({len(frames)} frames)", flush=True)
+    tmp = []
+    try:
+        for idx, frame in enumerate(frames):
+            fp = out_mp4.replace(".mp4", f"_tmp{idx}.png")
+            print(f"  FLUX frame {idx+1}/{len(frames)}", flush=True)
+            out = run_with_retry("black-forest-labs/flux-1.1-pro", {
+                "prompt": frame["prompt"],
+                "aspect_ratio": "9:16",
+                "output_format": "png",
+                "output_quality": 100,
+                "safety_tolerance": 2,
+                "prompt_upsampling": True,
+            })
+            download(str(out), fp)
+            add_branding_overlay(fp, item.get("feature", "CampusClip"), item.get("headline", ""))
+            tmp.append(fp)
+            time.sleep(pause)
+        frames_to_video(tmp, out_mp4)
+        Path(out_mp4.replace(".mp4", ".txt")).write_text(item.get("caption", ""))
+    finally:
+        for fp in tmp:
+            Path(fp).unlink(missing_ok=True)
 
 
 # ── Style suffix ──────────────────────────────────────────────────────────────
@@ -361,137 +431,104 @@ IMAGES = [
     },
 ]
 
-# ── Video prompts — with start_image support ──────────────────────────────────
+# ── Video slideshows — 3 FLUX keyframes per video, assembled by ffmpeg ────────
+# Each video = 3 frames × 2.8s + crossfades ≈ 8 seconds total
 LIFESTYLE_VIDEOS = [
     {
-        "file": "ai-videos/v01_dashboard_walkthrough.mp4",
-        "caption": "Your academic life. One screen. 📱",
-        "duration": 5,
-        "start_image": "screenshot_01_dashboard.png",
-        "prompt": (
-            "Starting from the CampusClip dashboard on an iPhone — navy blue app with "
-            "graduation-cap logo, two circular grade rings (grey CURRENT AVERAGE, orange TARGET GOAL), "
-            "and class cards for MOS-2228B and EC2156B below. "
-            "A student's thumb scrolls down slowly. Camera gradually pulls back to reveal "
-            "a stylish student sitting on campus steps checking their grades. "
-            "Warm golden hour light, cinematic, like an Apple ad."
-        ),
+        "file": "ai-videos/v01_grade_tracker.mp4",
+        "feature": "Grade Tracker", "headline": "Watch your GPA climb.",
+        "caption": "Set your goal. Watch your GPA climb 📊",
+        "frames": [
+            {"prompt": "iPhone 16 Pro floating against deep navy background, screen showing CampusClip app: dark navy, graduation-cap blue logo, 'Your Academic Performance' card with grey ring '0% CURRENT AVERAGE' and orange ring '80% TARGET GOAL', two class cards MOS-2228B and EC2156B below. Apple product photography, electric blue rim light. " + STYLE},
+            {"prompt": "Extreme macro close-up of phone screen showing CampusClip grade tracker: two circular rings side by side, grey ring labeled 'CURRENT AVERAGE 0%' and glowing orange ring '80% TARGET GOAL', dark navy background, graduation-cap CampusClip logo at top. Soft screen glow, caustic light. " + STYLE},
+            {"prompt": "Joyful 21-year-old student on sunny campus steps holding iPhone, screen shows CampusClip grade tracker with rings and '3.7 GPA' in blue gradient text, bright smile, Western University stone architecture background, golden hour. " + STYLE},
+        ],
     },
     {
-        "file": "ai-videos/v02_calendar_reveal.mp4",
-        "caption": "Every deadline. Automatically tracked. 🗓️",
-        "duration": 5,
-        "start_image": "screenshot_06_calendar.png",
-        "prompt": (
-            "Starting from the CampusClip Calendar screen — 'April 2026, Track your academic journey', "
-            "monthly calendar with blue dot indicators on assignment days, "
-            "today (April 2) highlighted with blue rounded square and orange dot. "
-            "Below the calendar: 'Group Case Assignment — MOS-2228B — 8:00 PM' event card. "
-            "A finger taps April 15 (a day with a blue dot) — a new event card slides up smoothly. "
-            "Student at desk, relieved expression. Cinematic, satisfying UI animation."
-        ),
+        "file": "ai-videos/v02_deadline_calendar.mp4",
+        "feature": "Deadline Calendar", "headline": "Track your academic journey.",
+        "caption": "Every deadline. Every time. Never missed. 🗓️",
+        "frames": [
+            {"prompt": "iPhone screen showing CampusClip calendar app: 'April 2026' header, 'Track your academic journey' subtitle, monthly grid with small blue dots on assignment days, today (April 2) highlighted with blue rounded square, orange dot below. Deep navy app background. Product shot. " + STYLE},
+            {"prompt": "Close-up of phone showing CampusClip calendar event card: 'Group Case Assignment' in bold white, 'MOS-2228B' course code, clock icon '8:00 PM', orange dot indicator, dark navy glassmorphism card. Student desk, warm lamp light. " + STYLE},
+            {"prompt": "Student at organized desk at night checking phone showing CampusClip calendar, all assignments listed with blue checkmarks and upcoming deadlines. Fairy lights, warm cozy dorm room, relieved expression. " + STYLE},
+        ],
     },
     {
-        "file": "ai-videos/v03_explore_community.mp4",
-        "caption": "Discover your campus community 🔍",
-        "duration": 5,
-        "start_image": "screenshot_07_search.png",
-        "prompt": (
-            "Starting from the CampusClip Explore screen — teal compass icon, "
-            "'Discover your campus community' in green, Trending Students grid showing "
-            "James Young @jamesyoung11 and others, Popular Clubs below with Harry's Sports Club "
-            "and Sig Chi at Western. "
-            "A finger scrolls down through Trending Students, then taps Sig Chi at Western. "
-            "Camera pulls back to reveal a student on campus, smiling as they explore. "
-            "Vibrant, social, community energy. Cinematic."
-        ),
+        "file": "ai-videos/v03_campus_community.mp4",
+        "feature": "Explore & Clubs", "headline": "Discover your campus community.",
+        "caption": "Trending students. Popular clubs. All at Western. 🔍",
+        "frames": [
+            {"prompt": "iPhone screen showing CampusClip Explore page: teal compass icon, 'Explore' header, 'Discover your campus community' in green, search bar, 'Trending Students' section with 2x2 grid of student profile cards. Dark navy app background. " + STYLE},
+            {"prompt": "iPhone screen showing CampusClip Clubs page: 'My Clubs' section with Investment Club (Admin badge) and Sigma Chi ΣX (3 members), 'Discover Clubs' section with Western Finance Club showing orange 'Join' button. Blue gradient 'Create Club' button at top. " + STYLE},
+            {"prompt": "Four diverse Western University students gathered excitedly around one iPhone in a campus cafe, screen showing CampusClip clubs page, pointing at Investment Club and Sigma Chi entries, genuine laughter, warm Edison bulb lighting. " + STYLE},
+        ],
     },
 ]
 
 PRODUCT_VIDEOS = [
     {
-        "file": "ai-videos/v04_grade_rings_animate.mp4",
-        "caption": "Set your goal. Watch your grades climb 📊",
-        "duration": 5,
-        "start_image": "screenshot_01_dashboard.png",
-        "prompt": (
-            "Extreme macro close-up of iPhone screen showing the CampusClip Academic Performance card. "
-            "The grey 'CURRENT AVERAGE' ring starts at 0% and animates clockwise, filling to 87% in blue. "
-            "The percentage number ticks upward: 0%... 34%... 67%... 87%. "
-            "The orange 'TARGET GOAL' ring pulses with a warm glow. "
-            "Deeply satisfying animation, dark navy background, screen fills the frame entirely. "
-            "Apple product aesthetic, cinematic macro lens, soft screen reflection."
-        ),
+        "file": "ai-videos/v04_app_demo.mp4",
+        "feature": "All-In-One App", "headline": "One app. Your whole campus.",
+        "caption": "Dashboard. Calendar. Clubs. Feed. One app. 📱",
+        "frames": [
+            {"prompt": "iPhone 16 Pro in titanium finish on dark marble surface, screen showing CampusClip home dashboard: navy background, graduation-cap logo, Academic Performance rings, class cards. Dramatic side lighting, Apple product photography. " + STYLE},
+            {"prompt": "iPhone screen split view showing CampusClip navigation: Dashboard tab active with grade rings, then Calendar tab showing April 2026 grid, then Clubs tab with Investment Club. Bottom nav bar with all 6 tabs visible. Macro lens. " + STYLE},
+            {"prompt": "Student in Western University library sitting at wooden table, MacBook open, iPhone showing CampusClip dashboard — grade rings visible on screen. Warm amber light through tall windows, golden hour study session. " + STYLE},
+        ],
     },
     {
-        "file": "ai-videos/v05_calendar_deadline_demo.mp4",
-        "caption": "Never miss a deadline again 🔔",
-        "duration": 5,
-        "start_image": "screenshot_06_calendar.png",
-        "prompt": (
-            "Close-up of iPhone screen showing CampusClip Calendar — April 2026 grid, "
-            "blue dot indicators on assignment days, today highlighted. "
-            "Below: 'Group Case Assignment • MOS-2228B • 8:00 PM' event card with orange dot. "
-            "A phone notification slides down from top: '⏰ Assignment due tomorrow — MOS-2228B'. "
-            "Student hand visible picking up phone from nightstand, soft morning light. "
-            "Satisfying, reassuring, cinematic."
-        ),
+        "file": "ai-videos/v05_feed_social.mp4",
+        "feature": "Campus Feed", "headline": "Everything happening at Western.",
+        "caption": "Your campus feed. Always live. 🏠",
+        "frames": [
+            {"prompt": "iPhone screen showing CampusClip Feed: social post cards from Sigma Chi (ΣX logo, 'less than a minute ago', 'Private' purple badge), post with image, like (heart) and comment icons below. Investment Club post below. Dark navy app background. " + STYLE},
+            {"prompt": "Close-up of iPhone showing CampusClip club post: Sigma Chi fraternity post with attached sports graphic, 'Private' badge, engagement icons. Student thumb scrolling, warm afternoon light. " + STYLE},
+            {"prompt": "Student on campus bench in afternoon sun, smiling while scrolling through CampusClip feed on iPhone showing club posts and campus updates, other students and autumn trees in background. Candid, authentic lifestyle. " + STYLE},
+        ],
     },
     {
-        "file": "ai-videos/v06_join_club.mp4",
-        "caption": "Your club is waiting. Tap to join. 🤝",
-        "duration": 5,
-        "start_image": "screenshot_03_clubs.png",
-        "prompt": (
-            "iPhone screen showing CampusClip Clubs page with Investment Club, Sigma Chi ΣX, "
-            "and Discover Clubs section with Western Finance Club and orange 'Join' button. "
-            "A finger taps the orange 'Join' button — it flashes with a satisfying animation, "
-            "Western Finance Club slides up to 'My Clubs' with a smooth transition. "
-            "Student smiles in background bokeh, warm cafe lighting. Cinematic product demo."
-        ),
+        "file": "ai-videos/v06_profile_class.mp4",
+        "feature": "Your Student Profile", "headline": "2nd Year. BMOS - Finance. Western.",
+        "caption": "Your classes. Your clubs. Your profile. 🎓",
+        "frames": [
+            {"prompt": "iPhone screen showing CampusClip Profile: 'James Young' @jamessyoung93, circular J avatar, '3 posts • 0 followers • 1 following', '2nd Year • BMOS - Finance', 'Western University', Posts/Classes/Clubs tab bar (Posts active). " + STYLE},
+            {"prompt": "iPhone screen showing CampusClip class detail for 'Introduction to Managerial Accounting MOS-2228B': three metric tiles CURRENT 0%, TARGET 80% (green), REQUIRED 80% (orange), Assignments/Chat/Classmates tab bar. " + STYLE},
+            {"prompt": "Confident 2nd-year finance student at Western University standing outside Ivey Business School building, holding iPhone showing CampusClip profile, proud expression, professional look. Golden afternoon light. " + STYLE},
+        ],
     },
 ]
 
 EMOTIONAL_VIDEOS = [
     {
         "file": "ai-videos/v07_transformation.mp4",
+        "feature": "Stop the Chaos", "headline": "Before CampusClip. After CampusClip.",
         "caption": "Everything changes when you're organised 🙌",
-        "duration": 5,
-        "prompt": (
-            "Emotional transformation story. Scene 1: stressed student at chaotic desk, "
-            "scattered papers, multiple missed deadlines, overwhelmed expression, red alarm. "
-            "Cut to: the same student calm, phone showing CampusClip dashboard — "
-            "navy blue app with two organised circular rings, class cards neatly listed. "
-            "Their posture relaxes, they smile. Room mood shifts from harsh to warm blue. "
-            "Cinematic cross-dissolve, like a productivity app commercial."
-        ),
+        "frames": [
+            {"prompt": "Stressed university student at chaotic desk: scattered papers, crossed-out paper planner, multiple missed deadline sticky notes everywhere, empty coffee cups, overwhelmed expression, red-orange harsh lighting. " + STYLE},
+            {"prompt": "iPhone screen showing CampusClip dashboard: all deadlines organized in calendar, class cards MOS-2228B and EC2156B with upcoming assignments listed, grade rings showing progress. Clean navy interface. Calm, organized. " + STYLE},
+            {"prompt": "Same student now calm and confident at clean organized desk, holding phone showing CampusClip, satisfied smile, all deadlines sorted. Warm blue soft lighting, plants, tidy space. Complete transformation. " + STYLE},
+        ],
     },
     {
-        "file": "ai-videos/v08_campus_confidence.mp4",
+        "file": "ai-videos/v08_campus_era.mp4",
+        "feature": "CampusClip", "headline": "Your campus. Your app. Your era.",
         "caption": "Your campus. Your app. Your era. 🍂",
-        "duration": 10,
-        "start_image": "screenshot_01_dashboard.png",
-        "prompt": (
-            "Stylish student walking confidently through Western University campus in autumn. "
-            "Gothic stone buildings, maple leaves falling in golden hour. "
-            "She glances at iPhone showing CampusClip dashboard — the Academic Performance card "
-            "shows rings, her classes listed clearly. She smiles and walks taller. "
-            "Camera tracks alongside at shoulder level, slow-motion moments. "
-            "Cinematic, aspirational, iPhone commercial feel. 24fps, anamorphic bokeh."
-        ),
+        "frames": [
+            {"prompt": "Stylish female student in Western University hoodie walking confidently through stunning autumn campus path, maple leaves falling around her, gothic University College stone building in background, golden hour. " + STYLE},
+            {"prompt": "Close-up of student's iPhone showing CampusClip dashboard: performance rings, class cards, calendar with no overdue deadlines. She's holding it and smiling. Bokeh campus background. " + STYLE},
+            {"prompt": "Wide shot of Western University campus at golden hour: students walking across scenic campus quad, autumn red and orange trees, gothic stone buildings, beautiful and vibrant university atmosphere. " + STYLE},
+        ],
     },
     {
         "file": "ai-videos/v09_graduation.mp4",
+        "feature": "Organised Students Graduate Differently", "headline": "Start organised. Graduate proud.",
         "caption": "Organised students graduate differently 🎓",
-        "duration": 10,
-        "prompt": (
-            "Emotional slow-motion university graduation. Graduate walks across stage, "
-            "receives diploma, raises it overhead — pure joy, crowd cheers. "
-            "Cut to: phone showing CampusClip — 'CURRENT AVERAGE' ring now filled and glowing, "
-            "'Congratulations — Dean's List 🎉' notification on navy background with the "
-            "CampusClip graduation-cap logo. "
-            "Confetti falls in golden sunlight, caps fly. Cinematic, emotional, swelling energy."
-        ),
+        "frames": [
+            {"prompt": "Student using CampusClip on campus — phone shows grade tracker with 3.9 GPA, both rings filled, all classes on track. Confident expression, autumn campus, backpack on. The journey begins. " + STYLE},
+            {"prompt": "University graduation ceremony: graduate in cap and gown walking across stage, receiving diploma from dean, crowd cheering, confetti falling, brilliant smile, campus quad in golden sunlight. " + STYLE},
+            {"prompt": "Graduate holding diploma triumphantly overhead, cap and gown, campus quad, confetti mid-air, phone in other hand showing CampusClip with 'Final GPA 3.9 — Congratulations! 🎉' notification. Cinematic, emotional, golden hour. " + STYLE},
+        ],
     },
 ]
 
@@ -601,7 +638,7 @@ if vids:
     print(f"\n{'='*50}\nGenerating {len(vids)} video clips\n{'='*50}", flush=True)
     for item in vids:
         try:
-            gen_video(item)
+            gen_video_slideshow(item)
         except Exception as e:
             print(f"  ERROR: {e}", flush=True)
 
