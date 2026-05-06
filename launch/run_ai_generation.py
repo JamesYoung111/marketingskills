@@ -521,39 +521,57 @@ def gen_image(item, pause=12):
 
 
 def gen_video(item, pause=15):
-    print(f"\nGenerating video: {item['file']} ({item.get('duration', 5)}s)", flush=True)
+    duration = item.get("duration", 5)
+    print(f"\nGenerating video: {item['file']} ({duration}s)", flush=True)
 
-    input_data = {
-        "prompt": item["prompt"],
-        "duration": str(item.get("duration", 5)),  # Kling expects string
-        "aspect_ratio": "9:16",
-        "cfg_scale": 0.5,
-        "negative_prompt": "blurry, low quality, watermark",
-    }
-
-    # Try start_image — skip if URL fetch fails so generation still proceeds
+    # Try to attach a real app screenshot as the first frame
+    first_frame_url = None
     screenshot_file = item.get("start_image")
     if screenshot_file:
-        img_url = screenshot_url(screenshot_file)
+        candidate = screenshot_url(screenshot_file)
         try:
-            # Verify URL is reachable before passing to Kling
-            import urllib.request as _ur
-            _ur.urlopen(img_url, timeout=8)
-            input_data["start_image"] = img_url
-            print(f"  using start_image: {img_url}", flush=True)
+            urllib.request.urlopen(candidate, timeout=8)
+            first_frame_url = candidate
+            print(f"  first_frame: {first_frame_url}", flush=True)
         except Exception as e:
-            print(f"  start_image unreachable ({e}), generating without it", flush=True)
+            print(f"  first_frame URL unreachable ({e}), skipping", flush=True)
 
-    # Try current model ID first, fall back to alternate naming
-    for model_id in ["kwaivgi/kling-v1-6-pro", "kwaivgi/kling-v1.6-pro", "kwaivgi/kling-v1-5-pro"]:
+    # Models to try in order — minimax is free-tier accessible, Kling as fallback
+    def minimax_input():
+        d = {"prompt": item["prompt"], "duration": duration, "aspect_ratio": "9:16"}
+        if first_frame_url:
+            d["first_frame_image"] = first_frame_url
+        return d
+
+    def kling_input(model_ver):
+        d = {"prompt": item["prompt"], "duration": str(duration),
+             "aspect_ratio": "9:16", "cfg_scale": 0.5}
+        if first_frame_url:
+            d["start_image"] = first_frame_url
+        return d
+
+    candidates = [
+        ("minimax/video-01",         minimax_input()),
+        ("minimax/video-01-live",     minimax_input()),
+        ("kwaivgi/kling-v1-6-pro",   kling_input("v1-6-pro")),
+        ("kwaivgi/kling-v1.6-pro",   kling_input("v1.6-pro")),
+    ]
+
+    out = None
+    last_error = None
+    for model_id, model_input in candidates:
         try:
-            print(f"  trying model: {model_id}", flush=True)
-            out = run_with_retry(model_id, input_data)
+            print(f"  trying {model_id} ...", flush=True)
+            out = run_with_retry(model_id, model_input)
+            print(f"  ✓ success with {model_id}", flush=True)
             break
         except Exception as e:
-            print(f"  model {model_id} failed: {e}", flush=True)
-            if model_id == "kwaivgi/kling-v1-5-pro":
-                raise
+            last_error = e
+            print(f"  ✗ {model_id} failed: {e}", flush=True)
+
+    if out is None:
+        raise RuntimeError(f"All video models failed. Last error: {last_error}")
+
     url = str(out) if isinstance(out, str) else str(list(out)[0])
     download(url, item["file"])
     Path(item["file"].replace(".mp4", ".txt")).write_text(item.get("caption", ""))
