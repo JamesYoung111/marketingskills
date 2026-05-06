@@ -3,7 +3,7 @@
 CampusClip AI Content Generator — called by GitHub Actions.
 Usage: python3 run_ai_generation.py [images|lifestyle|product|emotional|all]
 """
-import os, sys, urllib.request
+import os, sys, time, urllib.request
 from pathlib import Path
 import replicate
 
@@ -15,6 +15,19 @@ Path("ai-videos").mkdir(exist_ok=True)
 def download(url, path):
     urllib.request.urlretrieve(str(url), path)
     print(f"  saved -> {path}", flush=True)
+
+def run_with_retry(model, input_data, retries=4):
+    for attempt in range(retries):
+        try:
+            return replicate.run(model, input=input_data)
+        except Exception as e:
+            if "429" in str(e) or "throttled" in str(e).lower():
+                wait = 60 * (attempt + 1)
+                print(f"  Rate limited — waiting {wait}s before retry {attempt+1}/{retries}...", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"Failed after {retries} retries")
 
 STYLE = (
     "cinematic lighting, shot on iPhone 16 Pro, ultra-detailed, "
@@ -138,11 +151,11 @@ EMOTIONAL_VIDEOS = [
     },
 ]
 
-def gen_image(item):
+def gen_image(item, pause=12):
     print(f"\nGenerating image: {item['file']}", flush=True)
-    out = replicate.run(
+    out = run_with_retry(
         "black-forest-labs/flux-1.1-pro",
-        input={
+        {
             "prompt": item["prompt"],
             "aspect_ratio": "9:16",
             "output_format": "png",
@@ -153,12 +166,14 @@ def gen_image(item):
     )
     download(str(out), item["file"])
     Path(item["file"].replace(".png", ".txt")).write_text(item.get("caption", ""))
+    print(f"  waiting {pause}s to respect rate limit...", flush=True)
+    time.sleep(pause)
 
-def gen_video(item):
+def gen_video(item, pause=15):
     print(f"\nGenerating video: {item['file']} ({item.get('duration', 5)}s)", flush=True)
-    out = replicate.run(
+    out = run_with_retry(
         "kwaivgi/kling-v1-6-pro",
-        input={
+        {
             "prompt": item["prompt"],
             "duration": item.get("duration", 5),
             "aspect_ratio": "9:16",
@@ -168,6 +183,8 @@ def gen_video(item):
     url = str(out) if isinstance(out, str) else str(list(out)[0])
     download(url, item["file"])
     Path(item["file"].replace(".mp4", ".txt")).write_text(item.get("caption", ""))
+    print(f"  waiting {pause}s to respect rate limit...", flush=True)
+    time.sleep(pause)
 
 batches = {
     "images":    (IMAGES, []),
