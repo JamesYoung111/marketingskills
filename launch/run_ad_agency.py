@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Install required packages before any imports
+import subprocess, sys
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "edge-tts"], check=True)
+
 """
 CampusClip Ad Agency Pipeline — Free Edition
   Avatar + voiceover : Hedra  (hedra.com — Creator plan $10/month)
@@ -86,12 +90,7 @@ TTS_VOICE = "en-US-JennyNeural"   # free Microsoft Edge TTS voice
 
 def tts_generate(text, out_path):
     """Generate speech audio locally via edge-tts (free, no API key needed)."""
-    try:
-        import edge_tts
-    except ImportError:
-        import subprocess as _sp
-        _sp.run([sys.executable, "-m", "pip", "install", "edge-tts"], check=True)
-        import edge_tts
+    import edge_tts
     async def _run():
         await edge_tts.Communicate(text, TTS_VOICE).save(str(out_path))
     asyncio.run(_run())
