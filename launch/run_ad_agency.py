@@ -26,7 +26,7 @@ HEYGEN_AVATAR_ID = os.environ.get("HEYGEN_AVATAR_ID", "Daisy-inskirt-20220818")
 HEYGEN_VOICE_ID  = os.environ.get("HEYGEN_VOICE_ID",  "1bd001e7e50f421d891986aad5158bc8")
 
 HEYGEN_BASE = "https://api.heygen.com"
-RUNWAY_BASE = "https://api.dev.runwayml.com"
+RUNWAY_BASE = "https://api.runwayml.com"
 
 # ── Output directories ─────────────────────────────────────────────────────────
 OUT_DIR = Path("ai-videos/ad-agency")

@@ -10,7 +10,7 @@ import os, sys, json, time, subprocess, urllib.request, urllib.error, traceback
 from pathlib import Path
 
 API_KEY  = os.environ.get("RUNWAY_API_KEY", "")
-BASE_URL = "https://api.dev.runwayml.com"
+BASE_URL = "https://api.runwayml.com"
 HEADERS  = {
     "Authorization":  f"Bearer {API_KEY}",
     "X-Runway-Version": "2024-11-06",
