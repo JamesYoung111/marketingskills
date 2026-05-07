@@ -118,10 +118,11 @@ def hedra_upload_avatar(image_path):
 def hedra_submit(script, model_id, image_asset_id, audio_path):
     """Generate TTS locally, upload audio asset, submit Hedra video generation."""
     tts_generate(script, audio_path)
+    print(f"  [Hedra] uploading audio ({audio_path.stat().st_size} bytes)...", flush=True)
     audio_asset_id = hedra_upload_file(audio_path, "audio", "speech.mp3", "audio/mpeg")
     print(f"  [Hedra] audio_asset={audio_asset_id}", flush=True)
 
-    resp = hedra_req("POST", "/generations", {
+    payload = {
         "type":              "video",
         "ai_model_id":       model_id,
         "start_keyframe_id": image_asset_id,
@@ -131,7 +132,10 @@ def hedra_submit(script, model_id, image_asset_id, audio_path):
             "resolution":   "720p",
             "aspect_ratio": "9:16",
         },
-    })
+    }
+    print(f"  [Hedra] submitting: {json.dumps(payload)}", flush=True)
+    resp = hedra_req("POST", "/generations", payload)
+    print(f"  [Hedra] response: {resp}", flush=True)
     gen_id = resp["id"]
     print(f"  [Hedra] queued generation_id={gen_id}", flush=True)
     return gen_id
@@ -141,14 +145,17 @@ def hedra_wait(gen_id, out_path, timeout=900):
     while time.time() < deadline:
         resp = hedra_req("GET", f"/generations/{gen_id}/status")
         status = resp.get("status", "")
-        print(f"  [Hedra] status: {status}", flush=True)
+        print(f"  [Hedra] status: {status}  keys={list(resp.keys())}", flush=True)
         if status == "complete":
-            url = resp["download_url"]
+            url = resp.get("download_url") or resp.get("url") or resp.get("video_url")
+            if not url:
+                raise RuntimeError(f"Hedra complete but no download URL in response: {resp}")
+            print(f"  [Hedra] downloading from {url[:80]}...", flush=True)
             urllib.request.urlretrieve(url, str(out_path))
             print(f"  [Hedra] saved → {out_path}", flush=True)
             return
         if status == "error":
-            raise RuntimeError(f"Hedra error: {resp.get('error_message')}")
+            raise RuntimeError(f"Hedra error: {resp.get('error_message')} | full={resp}")
         time.sleep(10)
     raise RuntimeError(f"Hedra timeout for {gen_id}")
 
@@ -514,11 +521,17 @@ if not to_run:
     print(f"Unknown ad '{MODE}'. Run 'list' to see options.")
     sys.exit(1)
 
+failed = False
 for ad in to_run:
     try:
         generate_ad(ad)
     except Exception as e:
         print(f"\nERROR in {ad['name']}: {e}", flush=True)
         traceback.print_exc()
+        failed = True
+
+if failed:
+    print("\nOne or more ads failed — see errors above.", flush=True)
+    sys.exit(1)
 
 print("\nAll done!", flush=True)
