@@ -15,11 +15,12 @@ App UI reference (from real screenshots):
 - Clubs: blue/purple gradient "Create Club" button, orange "Join" buttons
 - Feed: social post cards with like/comment counts
 """
-import os, sys, time, urllib.request, base64, subprocess
+import os, sys, time, urllib.request, base64, subprocess, traceback
 from pathlib import Path
 import replicate
 
 BATCH = sys.argv[1] if len(sys.argv) > 1 else "images"
+print(f"[STARTUP] batch={BATCH!r}  REPLICATE_API_TOKEN set={bool(os.environ.get('REPLICATE_API_TOKEN'))}", flush=True)
 
 Path("ai-images").mkdir(exist_ok=True)
 Path("ai-videos").mkdir(exist_ok=True)
@@ -191,7 +192,7 @@ def gen_video_slideshow(item, pause=10):
     try:
         for idx, frame in enumerate(frames):
             fp = out_mp4.replace(".mp4", f"_tmp{idx}.png")
-            print(f"  FLUX frame {idx+1}/{len(frames)}", flush=True)
+            print(f"  FLUX frame {idx+1}/{len(frames)}: calling replicate.run()...", flush=True)
             out = run_with_retry("black-forest-labs/flux-1.1-pro", {
                 "prompt": frame["prompt"],
                 "aspect_ratio": "9:16",
@@ -200,6 +201,7 @@ def gen_video_slideshow(item, pause=10):
                 "safety_tolerance": 2,
                 "prompt_upsampling": True,
             })
+            print(f"  FLUX frame {idx+1} raw output type={type(out).__name__} value={str(out)[:120]}", flush=True)
             download(str(out), fp)
             add_branding_overlay(fp, item.get("feature", "CampusClip"), item.get("headline", ""))
             tmp.append(fp)
@@ -632,14 +634,17 @@ if imgs:
         try:
             gen_image(item)
         except Exception as e:
-            print(f"  ERROR: {e}", flush=True)
+            print(f"  ERROR generating {item['file']}: {e}", flush=True)
+            traceback.print_exc()
 
 if vids:
     print(f"\n{'='*50}\nGenerating {len(vids)} video clips\n{'='*50}", flush=True)
     for item in vids:
+        print(f"\n[DISPATCH] starting {item['file']}", flush=True)
         try:
             gen_video_slideshow(item)
         except Exception as e:
-            print(f"  ERROR: {e}", flush=True)
+            print(f"  ERROR generating {item['file']}: {e}", flush=True)
+            traceback.print_exc()
 
 print("\nDone!", flush=True)
