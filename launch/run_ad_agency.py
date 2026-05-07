@@ -75,11 +75,9 @@ def hedra_get_model_id():
 
 def hedra_get_voice_id():
     voices = hedra_req("GET", "/voices")
-    # prefer an English female voice
-    for v in voices:
-        labels = v.get("asset", {}).get("labels", {})
-        if labels.get("gender") == "female" and "en" in labels.get("accent", "en"):
-            return v["id"]
+    if not voices:
+        raise RuntimeError("No Hedra voices returned")
+    print(f"  [Hedra] {len(voices)} voices available, using first: {voices[0].get('name', voices[0]['id'])}", flush=True)
     return voices[0]["id"]
 
 def hedra_upload_avatar(image_path):
