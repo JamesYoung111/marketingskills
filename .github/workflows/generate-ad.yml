@@ -21,6 +21,10 @@ on:
         default: "aa01_grade_panic"
         type: choice
         options:
+          - reel1_the_problem
+          - reel2_seconds_vs_hours
+          - reel3_one_app
+          - reel4_founder_story
           - aa01_grade_panic
           - aa02_campus_life
           - aa03_first_year
