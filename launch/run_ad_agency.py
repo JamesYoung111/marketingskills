@@ -172,9 +172,8 @@ def piapi_req(method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"PiAPI {method} {path} → {e.code}: {e.read().decode()}")
 
-def kling_generate_clip(prompt, out_path, duration=5, timeout=600):
-    print(f"  [Kling] submitting clip...", flush=True)
-    print(f"  [Kling] prompt: {prompt[:90]}", flush=True)
+def kling_submit(prompt, duration=5):
+    print(f"  [Kling] submitting: {prompt[:80]}...", flush=True)
     resp = piapi_req("POST", "/api/v1/task", {
         "model":     "kling",
         "task_type": "video_generation",
@@ -189,21 +188,7 @@ def kling_generate_clip(prompt, out_path, duration=5, timeout=600):
     })
     task_id = resp["data"]["task_id"]
     print(f"  [Kling] task_id={task_id}", flush=True)
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        r      = piapi_req("GET", f"/api/v1/task/{task_id}")
-        status = r["data"]["status"]
-        print(f"  [Kling] status: {status}", flush=True)
-        if status == "completed":
-            url = r["data"]["output"]["works"][0]["video"]["resource_without_watermark"]
-            urllib.request.urlretrieve(url, str(out_path))
-            print(f"  [Kling] saved → {out_path}", flush=True)
-            return
-        if status == "failed":
-            raise RuntimeError(f"Kling failed: {r['data'].get('error')}")
-        time.sleep(15)
-    raise RuntimeError(f"Kling timeout for task {task_id}")
+    return task_id
 
 # ── ffmpeg compositing ─────────────────────────────────────────────────────────
 # Phone mockup — positioned in the bottom-right of the avatar section
@@ -449,58 +434,114 @@ ADS = [
 ]
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
+GENERATION_TIMEOUT = 2700   # 45 min per scene — Hedra can be slow to dequeue
+POLL_INTERVAL      = 20     # seconds between status checks
+
 def generate_ad(ad):
     name   = ad["name"]
     scenes = ad["scenes"]
     print(f"\n{'='*60}\nGenerating: {name}  ({len(scenes)} scenes)\n{'='*60}", flush=True)
 
     if not HEDRA_API_KEY:
-        raise RuntimeError("HEDRA_API_KEY not set — get it from hedra.com/api-profile")
+        raise RuntimeError("HEDRA_API_KEY not set")
     if not PIAPI_KEY:
-        raise RuntimeError("PIAPI_KEY not set — get it from piapi.ai workspace")
+        raise RuntimeError("PIAPI_KEY not set")
     if not HEDRA_AVATAR_URL:
-        raise RuntimeError(
-            "HEDRA_AVATAR_URL not set — provide a public URL to a portrait JPG "
-            "(the face used for the avatar)"
-        )
+        raise RuntimeError("HEDRA_AVATAR_URL not set")
 
-    # One-time setup: download avatar image, upload to Hedra, get model ID
-    print("\n[Setup] Fetching Hedra model + uploading avatar...", flush=True)
+    # ── Setup ──────────────────────────────────────────────────────────────────
+    print("\n[Setup] Hedra model + avatar upload...", flush=True)
     model_id  = hedra_get_model_id()
     avatar_img = TMP_DIR / "avatar.jpg"
     if not avatar_img.exists():
         urllib.request.urlretrieve(HEDRA_AVATAR_URL, str(avatar_img))
-        print(f"  [Hedra] avatar image saved → {avatar_img}", flush=True)
     image_asset_id = hedra_upload_avatar(avatar_img)
-    print(f"  [Hedra] model={model_id}  image_asset={image_asset_id}", flush=True)
+    print(f"  model={model_id}  image_asset={image_asset_id}", flush=True)
 
+    # ── Phase 1: submit ALL Hedra + Kling jobs immediately ─────────────────────
+    # hedra_pending / kling_pending: {scene_index -> job_id}
+    hedra_pending = {}
+    kling_pending = {}
+
+    for i, scene in enumerate(scenes):
+        hedra_clip = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
+        kling_clip = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
+        audio_path = TMP_DIR / f"{name}_audio_{i:02d}.mp3"
+
+        print(f"\n── Scene {i+1}/{len(scenes)}: submitting jobs ──", flush=True)
+        if not hedra_clip.exists():
+            gen_id = hedra_submit(scene["script"], model_id, image_asset_id, audio_path)
+            hedra_pending[i] = gen_id
+        else:
+            print(f"  [Hedra] cached {hedra_clip.name}", flush=True)
+
+        if not kling_clip.exists():
+            task_id = kling_submit(scene["kling"], duration=5)
+            kling_pending[i] = task_id
+        else:
+            print(f"  [Kling] cached {kling_clip.name}", flush=True)
+
+    # ── Phase 2: poll ALL pending jobs in one loop ─────────────────────────────
+    if hedra_pending or kling_pending:
+        print(f"\n[Wait] polling {len(hedra_pending)} Hedra + {len(kling_pending)} Kling jobs...", flush=True)
+        deadline = time.time() + GENERATION_TIMEOUT
+        hedra_done = set()
+        kling_done = set()
+
+        while time.time() < deadline:
+            # Check Hedra jobs
+            for i, gen_id in list(hedra_pending.items()):
+                if i in hedra_done:
+                    continue
+                resp   = hedra_req("GET", f"/generations/{gen_id}/status")
+                status = resp.get("status", "")
+                if status == "complete":
+                    url = resp.get("download_url") or resp.get("url") or resp.get("video_url")
+                    if not url:
+                        raise RuntimeError(f"Hedra complete but no URL: {resp}")
+                    out = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
+                    urllib.request.urlretrieve(url, str(out))
+                    print(f"  [Hedra] scene {i} done → {out.name}", flush=True)
+                    hedra_done.add(i)
+                elif status == "error":
+                    raise RuntimeError(f"Hedra error scene {i}: {resp}")
+                else:
+                    print(f"  [Hedra] scene {i}: {status}", flush=True)
+
+            # Check Kling jobs
+            for i, task_id in list(kling_pending.items()):
+                if i in kling_done:
+                    continue
+                r      = piapi_req("GET", f"/api/v1/task/{task_id}")
+                status = r["data"]["status"]
+                if status == "completed":
+                    url = r["data"]["output"]["works"][0]["video"]["resource_without_watermark"]
+                    out = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
+                    urllib.request.urlretrieve(url, str(out))
+                    print(f"  [Kling] scene {i} done → {out.name}", flush=True)
+                    kling_done.add(i)
+                elif status == "failed":
+                    raise RuntimeError(f"Kling failed scene {i}: {r['data'].get('error')}")
+                else:
+                    print(f"  [Kling] scene {i}: {status}", flush=True)
+
+            remaining = (set(hedra_pending) - hedra_done) | (set(kling_pending) - kling_done)
+            if not remaining:
+                break
+            time.sleep(POLL_INTERVAL)
+        else:
+            timed_out = (set(hedra_pending) - hedra_done) | (set(kling_pending) - kling_done)
+            raise RuntimeError(f"Timeout waiting for scenes: {timed_out}")
+
+    # ── Phase 3: composite + concat ────────────────────────────────────────────
     composited = []
     for i, scene in enumerate(scenes):
-        print(f"\n── Scene {i+1}/{len(scenes)} ──", flush=True)
-
         hedra_clip = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
-        audio_path = TMP_DIR / f"{name}_audio_{i:02d}.mp3"
         kling_clip = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
         comp_clip  = TMP_DIR / f"{name}_comp_{i:02d}.mp4"
-
-        # A: Hedra avatar speaking this scene's script
-        if hedra_clip.exists():
-            print(f"  [Hedra] using cached {hedra_clip.name}", flush=True)
-        else:
-            gen_id = hedra_submit(scene["script"], model_id, image_asset_id, audio_path)
-            hedra_wait(gen_id, hedra_clip)
-
-        # B: Kling cinematic B-roll for this scene
-        if kling_clip.exists():
-            print(f"  [Kling] using cached {kling_clip.name}", flush=True)
-        else:
-            kling_generate_clip(scene["kling"], kling_clip, duration=5)
-
-        # C: Composite
         composite_scene(kling_clip, hedra_clip, scene["screen"], comp_clip)
         composited.append(str(comp_clip))
 
-    # D: Concatenate all scenes
     final = OUT_DIR / f"{name}.mp4"
     concat_clips(composited, final)
     print(f"\n✓  DONE → {final}", flush=True)
