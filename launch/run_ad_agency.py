@@ -417,53 +417,6 @@ ADS = [
             },
         ],
     },
-    # ── Reel 4: Founder Story ─────────────────────────────────────────────────
-    {
-        "name": "reel4_founder_story",
-        "scenes": [
-            {
-                "script": "I built this because I was exhausted.",
-                "runway": (
-                    f"Young university student founder looking directly at camera, "
-                    f"authentic and direct, conversational, dorm room setting, {STYLE}"
-                ),
-                "screen": "dashboard",
-            },
-            {
-                "script": (
-                    "First week of second year — I'm juggling five different apps "
-                    "just to keep track of my classes, clubs, and what's happening on campus. "
-                    "Manually copying my entire syllabus into Google Calendar took me three hours. "
-                    "Three hours."
-                ),
-                "runway": (
-                    f"Student overwhelmed at desk late at night, multiple apps open, "
-                    f"stress visible, clock showing late hour, dorm room, {STYLE}"
-                ),
-                "screen": "class",
-            },
-            {
-                "script": (
-                    "So I built something better. "
-                    "Upload your syllabus — your whole schedule is done in seconds. "
-                    "Your clubs, events, and classmates all in one place."
-                ),
-                "runway": (
-                    f"Same student now calm and confident, holding phone, "
-                    f"smiling at screen, organized desk, warm light, {STYLE}"
-                ),
-                "screen": "calendar",
-            },
-            {
-                "script": "Launching at Western this August. Follow to be first.",
-                "runway": (
-                    f"Student walking across {CAMPUS}, confident stride, "
-                    f"autumn morning, phone in hand, future ahead of them, {STYLE}"
-                ),
-                "screen": "clubs",
-            },
-        ],
-    },
     # ── Legacy ads (kept for reference) ──────────────────────────────────────
     {
         "name": "aa01_grade_panic",
