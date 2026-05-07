@@ -74,17 +74,13 @@ def hedra_get_model_id():
     print(f"  [Hedra] {len(models)} models available:", flush=True)
     for m in models:
         print(f"    id={m['id']} name={m.get('name','?')} type={m.get('type','?')}", flush=True)
-    # prefer a model explicitly supporting video generation
-    for m in models:
-        name  = m.get("name", "").lower()
-        mtype = m.get("type", "").lower()
-        gen_types = [t.lower() for t in m.get("supported_generation_types", [])]
-        if "video" in gen_types or "character" in name or "video" in mtype:
-            print(f"  [Hedra] selected model: {m.get('name', m['id'])}", flush=True)
-            return m["id"]
-    # last resort — newest models are usually appended last
-    print(f"  [Hedra] fallback to last model: {models[-1].get('name', models[-1]['id'])}", flush=True)
-    return models[-1]["id"]
+    # Priority order: Hedra Character 3 > Hedra Character > Hedra Avatar > Hedra Omnia
+    for priority in ["hedra character 3", "hedra character", "hedra avatar", "hedra omnia"]:
+        for m in models:
+            if priority in m.get("name", "").lower():
+                print(f"  [Hedra] selected model: {m.get('name', m['id'])}", flush=True)
+                return m["id"]
+    raise RuntimeError(f"No Hedra avatar model found in {len(models)} models")
 
 def hedra_get_voice_id():
     voices = hedra_req("GET", "/voices")
