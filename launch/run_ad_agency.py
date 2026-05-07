@@ -121,10 +121,18 @@ def hedra_upload_avatar(image_path):
 
 def hedra_submit(script, model_id, image_asset_id, audio_path):
     """Generate TTS locally, upload audio asset, submit Hedra video generation."""
-    tts_generate(script, audio_path)
-    print(f"  [Hedra] uploading audio ({audio_path.stat().st_size} bytes)...", flush=True)
-    audio_asset_id = hedra_upload_file(audio_path, "audio", "speech.mp3", "audio/mpeg")
-    print(f"  [Hedra] audio_asset={audio_asset_id}", flush=True)
+    # Generate MP3 then convert to WAV — Hedra processes WAV more reliably
+    mp3_path = audio_path.with_suffix(".mp3")
+    tts_generate(script, mp3_path)
+    wav_path = audio_path.with_suffix(".wav")
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(mp3_path),
+        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1", str(wav_path),
+    ], capture_output=True, check=True)
+    print(f"  [Hedra] uploading audio ({wav_path.stat().st_size} bytes)...", flush=True)
+    audio_asset_id = hedra_upload_file(wav_path, "audio", "speech.wav", "audio/wav")
+    print(f"  [Hedra] audio_asset={audio_asset_id} — waiting 10s for asset to be ready...", flush=True)
+    time.sleep(10)  # give Hedra time to process the uploaded audio before submitting generation
 
     payload = {
         "type":              "video",
