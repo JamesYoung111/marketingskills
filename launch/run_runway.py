@@ -10,7 +10,7 @@ import os, sys, json, time, subprocess, urllib.request, urllib.error, traceback
 from pathlib import Path
 
 API_KEY  = os.environ.get("RUNWAY_API_KEY", "")
-BASE_URL = "https://api.runwayml.com"
+BASE_URL = "https://api.dev.runwayml.com"
 HEADERS  = {
     "Authorization":  f"Bearer {API_KEY}",
     "X-Runway-Version": "2024-11-06",
@@ -72,7 +72,7 @@ def generate_clip(prompt, duration=5, idx=0):
 
     resp = api_post("/v1/text_to_video", {
         "promptText": prompt,
-        "model":      "gen4_turbo",
+        "model":      "gen3a_turbo",
         "duration":   duration,
         "ratio":      "720:1280",
         "watermark":  False,

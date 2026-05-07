@@ -26,7 +26,7 @@ HEYGEN_AVATAR_ID = os.environ.get("HEYGEN_AVATAR_ID", "Daisy-inskirt-20220818")
 HEYGEN_VOICE_ID  = os.environ.get("HEYGEN_VOICE_ID",  "1bd001e7e50f421d891986aad5158bc8")
 
 HEYGEN_BASE = "https://api.heygen.com"
-RUNWAY_BASE = "https://api.runwayml.com"
+RUNWAY_BASE = "https://api.dev.runwayml.com"
 
 # ── Output directories ─────────────────────────────────────────────────────────
 OUT_DIR = Path("ai-videos/ad-agency")
@@ -142,7 +142,7 @@ def runway_generate_clip(prompt, out_path, duration=5, timeout=600):
     print(f"  [Runway] prompt: {prompt[:90]}", flush=True)
     resp = rw_post("/v1/text_to_video", {
         "promptText": prompt,
-        "model":      "gen4_turbo",
+        "model":      "gen3a_turbo",
         "duration":   duration,
         "ratio":      "720:1280",
         "watermark":  False,
