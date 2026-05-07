@@ -1,0 +1,78 @@
+name: Generate CampusClip Ad (Agency Pipeline)
+
+# Combined pipeline: HeyGen avatar + Runway Gen-4 cinematic B-roll + ffmpeg composite.
+# Each scene: AI character speaks the script over a cinematic campus background,
+# with the CampusClip app displayed in a phone mockup in the corner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      heygen_api_key:
+        description: "HeyGen API Key (app.heygen.com → Settings → API)"
+        required: true
+        type: string
+      runway_api_key:
+        description: "Runway API Key (app.runwayml.com → Account → API Keys)"
+        required: true
+        type: string
+      ad_name:
+        description: "Which ad to generate"
+        required: true
+        default: "aa01_grade_panic"
+        type: choice
+        options:
+          - aa01_grade_panic
+          - aa02_campus_life
+          - aa03_first_year
+          - all
+      avatar_id:
+        description: "HeyGen Avatar ID (leave blank for default)"
+        required: false
+        type: string
+      voice_id:
+        description: "HeyGen Voice ID (leave blank for default)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Generate Ad
+        working-directory: launch
+        env:
+          HEYGEN_API_KEY:   ${{ github.event.inputs.heygen_api_key }}
+          RUNWAY_API_KEY:   ${{ github.event.inputs.runway_api_key }}
+          HEYGEN_AVATAR_ID: ${{ github.event.inputs.avatar_id }}
+          HEYGEN_VOICE_ID:  ${{ github.event.inputs.voice_id }}
+        run: python3 run_ad_agency.py ${{ github.event.inputs.ad_name }}
+
+      - name: Commit generated ads
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
+          git add launch/ai-videos/ad-agency/ || true
+          git diff --staged --quiet && echo "Nothing new to commit" || \
+            git commit -m "feat: ad agency pipeline — ${{ github.event.inputs.ad_name }}"
+          git pull --rebase origin claude/group-skills-employees-9rORY
+          git push origin claude/group-skills-employees-9rORY
