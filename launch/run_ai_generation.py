@@ -142,40 +142,35 @@ def add_branding_overlay(img_path, feature_name, headline, cta="Free Download ·
     print(f"  branding overlay composited -> {img_path}", flush=True)
 
 
-def frames_to_video(frame_files, output_path, fps=24, dur=2.8, fade=0.45):
-    """Assemble PNG frames into a 9:16 MP4 with crossfade transitions via ffmpeg."""
+def frames_to_video(frame_files, output_path, fps=24, dur=3.0):
+    """Assemble PNG frames into a 9:16 MP4 via ffmpeg concat (reliable with still images)."""
     n = len(frame_files)
     scale = (
         "scale=1080:1920:force_original_aspect_ratio=decrease,"
         "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
-        f"fps={fps}"
+        f"fps={fps},setpts=PTS-STARTPTS"
     )
-    parts = [f"[{i}:v]{scale}[v{i}]" for i in range(n)]
-    prev = "[v0]"
-    for i in range(1, n):
-        offset = round(dur * i - fade * i, 3)
-        label = "[out]" if i == n - 1 else f"[xf{i}]"
-        parts.append(f"{prev}[v{i}]xfade=transition=fade:duration={fade}:offset={offset}{label}")
-        prev = f"[xf{i}]"
-    if n == 1:
-        parts.append("[v0]copy[out]")
 
     inputs = []
     for fp in frame_files:
-        inputs += ["-loop", "1", "-t", str(dur + 1), "-i", str(fp)]
+        inputs += ["-loop", "1", "-t", str(dur), "-i", str(fp)]
 
-    total = round(dur * n - fade * (n - 1), 2)
+    parts = [f"[{i}:v]{scale}[v{i}]" for i in range(n)]
+    concat_in = "".join(f"[v{i}]" for i in range(n))
+    parts.append(f"{concat_in}concat=n={n}:v=1:a=0[out]")
+
+    total = dur * n
     cmd = [
         "ffmpeg", "-y", *inputs,
-        "-filter_complex", "; ".join(parts),
+        "-filter_complex", ";".join(parts),
         "-map", "[out]",
-        "-t", str(total),
         "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
         output_path,
     ]
+    print(f"  ffmpeg cmd: {' '.join(cmd)}", flush=True)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
-        print(f"  ffmpeg error:\n{r.stderr[-1200:]}", flush=True)
+        print(f"  ffmpeg stderr:\n{r.stderr[-3000:]}", flush=True)
         raise RuntimeError("ffmpeg assembly failed")
     print(f"  assembled {n} frames -> {output_path} ({total:.1f}s)", flush=True)
 
