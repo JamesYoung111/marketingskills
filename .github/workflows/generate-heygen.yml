@@ -1,0 +1,66 @@
+name: Generate CampusClip HeyGen Videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      heygen_api_key:
+        description: "HeyGen API Key"
+        required: true
+        type: string
+      mode:
+        description: "What to do"
+        required: true
+        default: "generate"
+        type: choice
+        options:
+          - generate
+          - list-avatars
+          - list-voices
+      avatar_id:
+        description: "Avatar ID (leave blank for default — run list-avatars first to browse)"
+        required: false
+        type: string
+      voice_id:
+        description: "Voice ID (leave blank for default — run list-voices first to browse)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  heygen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run HeyGen generator
+        working-directory: launch
+        env:
+          HEYGEN_API_KEY:  ${{ github.event.inputs.heygen_api_key }}
+          HEYGEN_AVATAR_ID: ${{ github.event.inputs.avatar_id }}
+          HEYGEN_VOICE_ID:  ${{ github.event.inputs.voice_id }}
+        run: python3 run_heygen.py ${{ github.event.inputs.mode }}
+
+      - name: Commit generated videos
+        if: ${{ github.event.inputs.mode == 'generate' }}
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
+          git add launch/ai-videos/heygen/ || true
+          git diff --staged --quiet && echo "Nothing new to commit" || \
+            git commit -m "feat: HeyGen AI avatar videos — 5 CampusClip ads"
+          git pull --rebase origin claude/group-skills-employees-9rORY
+          git push origin claude/group-skills-employees-9rORY
