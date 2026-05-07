@@ -1,0 +1,110 @@
+name: Generate CampusClip HeyGen Videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      heygen_api_key:
+        description: "HeyGen API Key"
+        required: true
+        type: string
+      mode:
+        description: "What to do"
+        required: true
+        default: "generate"
+        type: choice
+        options:
+          - generate
+          - list-avatars
+          - list-voices
+      avatar_id:
+        description: "Avatar ID (run list-avatars first to browse options)"
+        required: false
+        type: string
+      voice_id:
+        description: "Voice ID (run list-voices first to browse options)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  heygen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Run HeyGen generator
+        working-directory: launch
+        env:
+          HEYGEN_API_KEY:   ${{ github.event.inputs.heygen_api_key }}
+          HEYGEN_AVATAR_ID: ${{ github.event.inputs.avatar_id }}
+          HEYGEN_VOICE_ID:  ${{ github.event.inputs.voice_id }}
+        run: python3 run_heygen.py ${{ github.event.inputs.mode }}
+
+      - name: Composite phone mockup onto generated videos
+        if: ${{ github.event.inputs.mode == 'generate' }}
+        working-directory: launch
+        run: |
+          mkdir -p ai-videos/heygen/final
+
+          # hg01 — grade tracker: dashboard the whole time
+          [ -f ai-videos/heygen/hg01_grade_tracker.mp4 ] && \
+          python3 compose_heygen.py \
+            ai-videos/heygen/hg01_grade_tracker.mp4 \
+            ai-videos/heygen/final/hg01_grade_tracker.mp4 \
+            dashboard:0-8 class:8-16 dashboard:16-999 || true
+
+          # hg02 — transformation: class detail then dashboard
+          [ -f ai-videos/heygen/hg02_transformation.mp4 ] && \
+          python3 compose_heygen.py \
+            ai-videos/heygen/hg02_transformation.mp4 \
+            ai-videos/heygen/final/hg02_transformation.mp4 \
+            dashboard:0-5 class:5-14 dashboard:14-22 calendar:22-999 || true
+
+          # hg03 — peer rec: dashboard, clubs, calendar
+          [ -f ai-videos/heygen/hg03_peer_rec.mp4 ] && \
+          python3 compose_heygen.py \
+            ai-videos/heygen/hg03_peer_rec.mp4 \
+            ai-videos/heygen/final/hg03_peer_rec.mp4 \
+            dashboard:0-7 clubs:7-13 calendar:13-999 || true
+
+          # hg04 — campus life: feed then search
+          [ -f ai-videos/heygen/hg04_campus_life.mp4 ] && \
+          python3 compose_heygen.py \
+            ai-videos/heygen/hg04_campus_life.mp4 \
+            ai-videos/heygen/final/hg04_campus_life.mp4 \
+            feed:0-10 search:10-999 || true
+
+          # hg05 — clubs: clubs screen the whole time
+          [ -f ai-videos/heygen/hg05_clubs.mp4 ] && \
+          python3 compose_heygen.py \
+            ai-videos/heygen/hg05_clubs.mp4 \
+            ai-videos/heygen/final/hg05_clubs.mp4 \
+            clubs:0-999 || true
+
+      - name: Commit generated videos
+        if: ${{ github.event.inputs.mode == 'generate' }}
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
+          git add launch/ai-videos/heygen/ || true
+          git diff --staged --quiet && echo "Nothing new to commit" || \
+            git commit -m "feat: HeyGen AI avatar videos with phone mockup compositing"
+          git pull --rebase origin claude/group-skills-employees-9rORY
+          git push origin claude/group-skills-employees-9rORY

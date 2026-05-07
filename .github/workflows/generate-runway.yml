@@ -1,0 +1,58 @@
+name: Generate CampusClip Runway Video Ads
+
+on:
+  workflow_dispatch:
+    inputs:
+      runway_api_key:
+        description: "Runway API Key (from app.runwayml.com → Settings → API)"
+        required: true
+        type: string
+      mode:
+        description: "Mode"
+        required: true
+        default: "generate"
+        type: choice
+        options:
+          - generate
+          - test
+
+permissions:
+  contents: write
+
+jobs:
+  runway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/group-skills-employees-9rORY
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Run Runway generator
+        working-directory: launch
+        env:
+          RUNWAY_API_KEY: ${{ github.event.inputs.runway_api_key }}
+        run: python3 run_runway.py ${{ github.event.inputs.mode }}
+
+      - name: Commit generated ads
+        if: ${{ github.event.inputs.mode == 'generate' }}
+        run: |
+          git config user.email "ai-bot@campusclip.ca"
+          git config user.name "CampusClip AI"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
+          git add launch/ai-videos/runway/ || true
+          git diff --staged --quiet && echo "Nothing new to commit" || \
+            git commit -m "feat: Runway ML lifestyle video ads with CampusClip phone overlay"
+          git pull --rebase origin claude/group-skills-employees-9rORY
+          git push origin claude/group-skills-employees-9rORY
