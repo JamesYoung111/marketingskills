@@ -22,7 +22,7 @@ Usage:
   python3 run_ad_agency.py reel1_the_problem
   python3 run_ad_agency.py all
 """
-import os, sys, json, time, subprocess, traceback
+import asyncio, os, sys, json, time, subprocess, traceback
 import urllib.request, urllib.error
 from pathlib import Path
 
@@ -82,49 +82,54 @@ def hedra_get_model_id():
                 return m["id"]
     raise RuntimeError(f"No Hedra avatar model found in {len(models)} models")
 
-def hedra_get_voice_id():
-    voices = hedra_req("GET", "/voices")
-    if not voices:
-        raise RuntimeError("No Hedra voices returned")
-    print(f"  [Hedra] {len(voices)} voices available, using first: {voices[0].get('name', voices[0]['id'])}", flush=True)
-    return voices[0]["id"]
+TTS_VOICE = "en-US-JennyNeural"   # free Microsoft Edge TTS voice
 
-def hedra_upload_avatar(image_path):
-    """Create an image asset on Hedra and upload the file. Returns asset_id."""
-    asset_id = hedra_req("POST", "/assets", {"name": "avatar.jpg", "type": "image"})["id"]
-    with open(image_path, "rb") as f:
-        img_data = f.read()
+def tts_generate(text, out_path):
+    """Generate speech audio locally via edge-tts (free, no API key needed)."""
+    import edge_tts
+    async def _run():
+        await edge_tts.Communicate(text, TTS_VOICE).save(str(out_path))
+    asyncio.run(_run())
+    print(f"  [TTS] saved → {out_path}", flush=True)
+
+def hedra_upload_file(local_path, asset_type, filename, content_type):
+    """Create a Hedra asset slot and upload a local file. Returns asset_id."""
+    asset_id = hedra_req("POST", "/assets", {"name": filename, "type": asset_type})["id"]
+    with open(local_path, "rb") as f:
+        data = f.read()
     boundary = "----campusclipboundary"
     body = (
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="avatar.jpg"\r\n'
-        f"Content-Type: image/jpeg\r\n\r\n"
-    ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
     req = urllib.request.Request(
-        HEDRA_BASE + f"/assets/{asset_id}/upload",
-        data=body,
-        headers={
-            "x-api-key":    HEDRA_API_KEY,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
+        HEDRA_BASE + f"/assets/{asset_id}/upload", data=body,
+        headers={"x-api-key": HEDRA_API_KEY,
+                 "Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
     urllib.request.urlopen(req, timeout=60)
     return asset_id
 
-def hedra_submit(script, model_id, voice_id, image_asset_id):
+def hedra_upload_avatar(image_path):
+    return hedra_upload_file(image_path, "image", "avatar.jpg", "image/jpeg")
+
+def hedra_submit(script, model_id, image_asset_id, audio_path):
+    """Generate TTS locally, upload audio asset, submit Hedra video generation."""
+    tts_generate(script, audio_path)
+    audio_asset_id = hedra_upload_file(audio_path, "audio", "speech.mp3", "audio/mpeg")
+    print(f"  [Hedra] audio_asset={audio_asset_id}", flush=True)
+
     resp = hedra_req("POST", "/generations", {
-        "type":             "video",
-        "ai_model_id":      model_id,
+        "type":              "video",
+        "ai_model_id":       model_id,
         "start_keyframe_id": image_asset_id,
+        "audio_id":          audio_asset_id,
         "generated_video_inputs": {
             "text_prompt":  "natural confident speaking, slight head movement",
             "resolution":   "720p",
             "aspect_ratio": "9:16",
-        },
-        "audio_generation": {
-            "voice_id": voice_id,
-            "text":     script,
         },
     })
     gen_id = resp["id"]
@@ -452,22 +457,22 @@ def generate_ad(ad):
             "(the face used for the avatar)"
         )
 
-    # One-time setup: download avatar image, upload to Hedra, get model/voice IDs
-    print("\n[Setup] Fetching Hedra model + voice + uploading avatar...", flush=True)
+    # One-time setup: download avatar image, upload to Hedra, get model ID
+    print("\n[Setup] Fetching Hedra model + uploading avatar...", flush=True)
     model_id  = hedra_get_model_id()
-    voice_id  = hedra_get_voice_id()
     avatar_img = TMP_DIR / "avatar.jpg"
     if not avatar_img.exists():
         urllib.request.urlretrieve(HEDRA_AVATAR_URL, str(avatar_img))
         print(f"  [Hedra] avatar image saved → {avatar_img}", flush=True)
     image_asset_id = hedra_upload_avatar(avatar_img)
-    print(f"  [Hedra] model={model_id}  voice={voice_id}  image_asset={image_asset_id}", flush=True)
+    print(f"  [Hedra] model={model_id}  image_asset={image_asset_id}", flush=True)
 
     composited = []
     for i, scene in enumerate(scenes):
         print(f"\n── Scene {i+1}/{len(scenes)} ──", flush=True)
 
         hedra_clip = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
+        audio_path = TMP_DIR / f"{name}_audio_{i:02d}.mp3"
         kling_clip = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
         comp_clip  = TMP_DIR / f"{name}_comp_{i:02d}.mp4"
 
@@ -475,7 +480,7 @@ def generate_ad(ad):
         if hedra_clip.exists():
             print(f"  [Hedra] using cached {hedra_clip.name}", flush=True)
         else:
-            gen_id = hedra_submit(scene["script"], model_id, voice_id, image_asset_id)
+            gen_id = hedra_submit(scene["script"], model_id, image_asset_id, audio_path)
             hedra_wait(gen_id, hedra_clip)
 
         # B: Kling cinematic B-roll for this scene
