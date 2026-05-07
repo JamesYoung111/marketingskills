@@ -280,6 +280,191 @@ CAMPUS = (
 )
 
 ADS = [
+    # ── Reel 1: The Problem ───────────────────────────────────────────────────
+    {
+        "name": "reel1_the_problem",
+        "scenes": [
+            {
+                "script": "You are wasting hours every week on this.",
+                "runway": (
+                    f"University student frantically switching between apps on laptop and phone, "
+                    f"stressed, overwhelmed expression, multiple browser tabs open, dorm room, {STYLE}"
+                ),
+                "screen": "dashboard",
+            },
+            {
+                "script": (
+                    "Managing your classes, clubs, and campus life across five different apps — "
+                    "manually entering everything yourself — is eating your time. "
+                    "Every syllabus, every deadline, every club meeting — typed in by hand."
+                ),
+                "runway": (
+                    f"Close-up of student's hands slowly typing a class schedule into Google Calendar, "
+                    f"frustrated expression, switching between PDF syllabus and browser, late night, {STYLE}"
+                ),
+                "screen": "calendar",
+            },
+            {
+                "script": (
+                    "Upload your syllabus to CampusClip. "
+                    "Your entire calendar populates in seconds. "
+                    "Classes, clubs, events — one place."
+                ),
+                "runway": (
+                    f"Student's face going from stressed to genuinely relieved and happy, "
+                    f"looking at phone, warm light, relaxed shoulders, {STYLE}"
+                ),
+                "screen": "calendar",
+            },
+            {
+                "script": "CampusClip. Coming to Western this August. Link in bio.",
+                "runway": (
+                    f"Beautiful {CAMPUS}, autumn leaves, students walking confidently, "
+                    f"golden hour, cinematic wide shot, {STYLE}"
+                ),
+                "screen": "dashboard",
+            },
+        ],
+    },
+    # ── Reel 2: Seconds vs Hours ──────────────────────────────────────────────
+    {
+        "name": "reel2_seconds_vs_hours",
+        "scenes": [
+            {
+                "script": "This takes three hours. This takes ten seconds.",
+                "runway": (
+                    f"Two university students side by side — one frustrated at laptop typing slowly, "
+                    f"one relaxed holding phone smiling, contrasting expressions, campus library, {STYLE}"
+                ),
+                "screen": "class",
+            },
+            {
+                "script": (
+                    "Upload your syllabus, and CampusClip automatically builds your entire "
+                    "academic schedule for you. No more copy-paste. No more missing deadlines."
+                ),
+                "runway": (
+                    f"Student uploading a document on phone, then looking amazed as calendar fills up, "
+                    f"satisfying reveal moment, bright study space, {STYLE}"
+                ),
+                "screen": "calendar",
+            },
+            {
+                "script": (
+                    "Your academics, your clubs, your campus events, your social feed — "
+                    "all in one app."
+                ),
+                "runway": (
+                    f"Student casually scrolling phone with a smile, relaxed on campus bench, "
+                    f"{CAMPUS}, autumn, everything under control, {STYLE}"
+                ),
+                "screen": "feed",
+            },
+            {
+                "script": "The future of student life at Western. Coming August 2026.",
+                "runway": (
+                    f"Cinematic drone shot over {CAMPUS}, golden afternoon light, "
+                    f"students thriving, autumn colours, inspiring, {STYLE}"
+                ),
+                "screen": "dashboard",
+            },
+        ],
+    },
+    # ── Reel 3: One App ───────────────────────────────────────────────────────
+    {
+        "name": "reel3_one_app",
+        "scenes": [
+            {
+                "script": "What if one app ran your entire university life?",
+                "runway": (
+                    f"University student looking at phone thoughtfully, curious expression, "
+                    f"then face lighting up, {CAMPUS} background, {STYLE}"
+                ),
+                "screen": "dashboard",
+            },
+            {
+                "script": (
+                    "Your class schedule — auto-built from your syllabus. "
+                    "Your assignments and deadlines — tracked automatically."
+                ),
+                "runway": (
+                    f"Students in a lecture hall, organized and focused, professor at front, "
+                    f"warm academic atmosphere, Western University, {STYLE}"
+                ),
+                "screen": "class",
+            },
+            {
+                "script": (
+                    "Your clubs and campus events all in one feed. "
+                    "And your classmates — connected in one place."
+                ),
+                "runway": (
+                    f"Students at a vibrant campus club fair, energetic, diverse groups, "
+                    f"welcoming, {CAMPUS} outdoor space, autumn, {STYLE}"
+                ),
+                "screen": "clubs",
+            },
+            {
+                "script": (
+                    "One app. Your whole campus life. "
+                    "CampusClip — launching at Western this August."
+                ),
+                "runway": (
+                    f"Student relaxed on campus grass, laptop open, phone in hand, "
+                    f"completely at ease, {CAMPUS} golden hour behind them, {STYLE}"
+                ),
+                "screen": "feed",
+            },
+        ],
+    },
+    # ── Reel 4: Founder Story ─────────────────────────────────────────────────
+    {
+        "name": "reel4_founder_story",
+        "scenes": [
+            {
+                "script": "I built this because I was exhausted.",
+                "runway": (
+                    f"Young university student founder looking directly at camera, "
+                    f"authentic and direct, conversational, dorm room setting, {STYLE}"
+                ),
+                "screen": "dashboard",
+            },
+            {
+                "script": (
+                    "First week of second year — I'm juggling five different apps "
+                    "just to keep track of my classes, clubs, and what's happening on campus. "
+                    "Manually copying my entire syllabus into Google Calendar took me three hours. "
+                    "Three hours."
+                ),
+                "runway": (
+                    f"Student overwhelmed at desk late at night, multiple apps open, "
+                    f"stress visible, clock showing late hour, dorm room, {STYLE}"
+                ),
+                "screen": "class",
+            },
+            {
+                "script": (
+                    "So I built something better. "
+                    "Upload your syllabus — your whole schedule is done in seconds. "
+                    "Your clubs, events, and classmates all in one place."
+                ),
+                "runway": (
+                    f"Same student now calm and confident, holding phone, "
+                    f"smiling at screen, organized desk, warm light, {STYLE}"
+                ),
+                "screen": "calendar",
+            },
+            {
+                "script": "Launching at Western this August. Follow to be first.",
+                "runway": (
+                    f"Student walking across {CAMPUS}, confident stride, "
+                    f"autumn morning, phone in hand, future ahead of them, {STYLE}"
+                ),
+                "screen": "clubs",
+            },
+        ],
+    },
+    # ── Legacy ads (kept for reference) ──────────────────────────────────────
     {
         "name": "aa01_grade_panic",
         "scenes": [
