@@ -17,6 +17,11 @@ node_modules/
 # Remotion video project (root only, not skills/video/)
 /video/
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
 # Editor
 *.swp
 *.swo
