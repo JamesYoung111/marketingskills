@@ -1,41 +1,35 @@
 name: Generate CampusClip Ad (Agency Pipeline)
 
-# Combined pipeline: HeyGen avatar + Runway Gen-4 cinematic B-roll + ffmpeg composite.
-# Each scene: AI character speaks the script over a cinematic campus background,
-# with the CampusClip app displayed in a phone mockup in the corner.
+# Combined pipeline:
+#   Hedra  — AI avatar speaks the script  (hedra.com Creator plan, $10/month)
+#   Kling  — cinematic campus B-roll       (piapi.ai, free credits on signup)
+#   ffmpeg — composites both + phone mockup overlay
 
 on:
   workflow_dispatch:
     inputs:
-      heygen_api_key:
-        description: "HeyGen API Key (app.heygen.com → Settings → API)"
+      hedra_api_key:
+        description: "Hedra API Key (hedra.com/api-profile — requires Creator plan)"
         required: true
         type: string
-      runway_api_key:
-        description: "Runway API Key (app.runwayml.com → Account → API Keys)"
+      piapi_key:
+        description: "PiAPI Key (piapi.ai workspace — free credits on signup)"
+        required: true
+        type: string
+      avatar_image_url:
+        description: "Public URL to a portrait JPG — the face used for the avatar"
         required: true
         type: string
       ad_name:
         description: "Which ad to generate"
         required: true
-        default: "aa01_grade_panic"
+        default: "reel1_the_problem"
         type: choice
         options:
           - reel1_the_problem
           - reel2_seconds_vs_hours
           - reel3_one_app
-          - aa01_grade_panic
-          - aa02_campus_life
-          - aa03_first_year
           - all
-      avatar_id:
-        description: "HeyGen Avatar ID (leave blank for default)"
-        required: false
-        type: string
-      voice_id:
-        description: "HeyGen Voice ID (leave blank for default)"
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -63,10 +57,9 @@ jobs:
       - name: Generate Ad
         working-directory: launch
         env:
-          HEYGEN_API_KEY:   ${{ github.event.inputs.heygen_api_key }}
-          RUNWAY_API_KEY:   ${{ github.event.inputs.runway_api_key }}
-          HEYGEN_AVATAR_ID: ${{ github.event.inputs.avatar_id }}
-          HEYGEN_VOICE_ID:  ${{ github.event.inputs.voice_id }}
+          HEDRA_API_KEY:    ${{ github.event.inputs.hedra_api_key }}
+          PIAPI_KEY:        ${{ github.event.inputs.piapi_key }}
+          HEDRA_AVATAR_URL: ${{ github.event.inputs.avatar_image_url }}
         run: python3 run_ad_agency.py ${{ github.event.inputs.ad_name }}
 
       - name: Commit generated ads
@@ -76,6 +69,6 @@ jobs:
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/JamesYoung111/marketingskills.git
           git add launch/ai-videos/ad-agency/ || true
           git diff --staged --quiet && echo "Nothing new to commit" || \
-            git commit -m "feat: ad agency pipeline — ${{ github.event.inputs.ad_name }}"
+            git commit -m "feat: ad agency — ${{ github.event.inputs.ad_name }}"
           git pull --rebase origin claude/group-skills-employees-9rORY
           git push origin claude/group-skills-employees-9rORY
