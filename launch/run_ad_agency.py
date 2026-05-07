@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
 """
-CampusClip Ad Agency Pipeline
-Combines HeyGen (AI avatar + voiceover) + Runway ML (cinematic B-roll) + ffmpeg composite.
+CampusClip Ad Agency Pipeline — Free Edition
+  Avatar + voiceover : Hedra  (hedra.com — Creator plan $10/month)
+  Cinematic B-roll   : Kling  via PiAPI (piapi.ai — free credits on signup)
 
-For each scene:
-  1. HeyGen renders the avatar speaking that scene's script against a chroma-green background
-  2. Runway renders cinematic campus B-roll for that scene
-  3. ffmpeg composites: B-roll background + chroma-keyed avatar + phone mockup overlay
+Layout per scene (1080x1920):
+  ┌──────────────────┐
+  │  Kling B-roll    │  top 55 %  (1080 x 1056)
+  ├──────────────────┤
+  │  Hedra avatar    │  bottom 45 %  (1080 x 864, face/shoulders cropped)
+  │            [📱]  │  phone mockup bottom-right
+  └──────────────────┘
 
-All scenes are concatenated into the final polished ad.
+Setup (env vars):
+  HEDRA_API_KEY     — hedra.com/api-profile  (requires Creator plan)
+  PIAPI_KEY         — piapi.ai workspace     (free credits on signup)
+  HEDRA_AVATAR_URL  — public URL to a portrait JPG used as the avatar face
 
 Usage:
-  python3 run_ad_agency.py                   # generate all ads
-  python3 run_ad_agency.py list              # list available ads
-  python3 run_ad_agency.py aa01_grade_panic  # generate one specific ad
+  python3 run_ad_agency.py list
+  python3 run_ad_agency.py reel1_the_problem
+  python3 run_ad_agency.py all
 """
 import os, sys, json, time, subprocess, traceback
 import urllib.request, urllib.error
 from pathlib import Path
 
 # ── Credentials ────────────────────────────────────────────────────────────────
-HEYGEN_API_KEY   = os.environ.get("HEYGEN_API_KEY",   "")
-RUNWAY_API_KEY   = os.environ.get("RUNWAY_API_KEY",   "")
-HEYGEN_AVATAR_ID = os.environ.get("HEYGEN_AVATAR_ID", "Daisy-inskirt-20220818")
-HEYGEN_VOICE_ID  = os.environ.get("HEYGEN_VOICE_ID",  "1bd001e7e50f421d891986aad5158bc8")
+HEDRA_API_KEY    = os.environ.get("HEDRA_API_KEY",    "")
+PIAPI_KEY        = os.environ.get("PIAPI_KEY",        "")
+HEDRA_AVATAR_URL = os.environ.get("HEDRA_AVATAR_URL", "")
 
-HEYGEN_BASE = "https://api.heygen.com"
-RUNWAY_BASE = "https://api.runwayml.com"
+HEDRA_BASE = "https://api.hedra.com/web-app/public"
+PIAPI_BASE = "https://api.piapi.ai"
 
 # ── Output directories ─────────────────────────────────────────────────────────
 OUT_DIR = Path("ai-videos/ad-agency")
@@ -48,143 +54,155 @@ SCREENS = {
     "search":    f"{RAW}/IMG_1623.jpeg",
 }
 
-# ── HeyGen API ─────────────────────────────────────────────────────────────────
-def hg_request(method, endpoint, data=None, params=None):
-    url = HEYGEN_BASE + endpoint
-    if params:
-        url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method, headers={
-        "X-Api-Key":    HEYGEN_API_KEY,
-        "Content-Type": "application/json",
-        "Accept":       "application/json",
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"HeyGen {method} {endpoint} → {e.code}: {e.read().decode()}")
-
-def heygen_submit(script):
-    """Submit one HeyGen scene with green screen background, return video_id."""
-    print(f"  [HeyGen] submitting ({len(script.split())} words)...", flush=True)
-    resp = hg_request("POST", "/v2/video/generate", {
-        "video_inputs": [{
-            "character": {
-                "type":         "avatar",
-                "avatar_id":    HEYGEN_AVATAR_ID,
-                "avatar_style": "normal",
-            },
-            "voice": {
-                "type":       "text",
-                "input_text": script,
-                "voice_id":   HEYGEN_VOICE_ID,
-                "speed":      1.0,
-            },
-            "background": {"type": "color", "value": "#00FF00"},
-        }],
-        "dimension": {"width": 1080, "height": 1920},
-        "caption":   False,
-        "title":     "CampusClip Ad Scene",
-    })
-    vid_id = resp["data"]["video_id"]
-    print(f"  [HeyGen] queued video_id={vid_id}", flush=True)
-    return vid_id
-
-def heygen_wait(vid_id, out_path, timeout=900):
-    """Poll HeyGen until done, download to out_path."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        resp = hg_request("GET", "/v1/video_status.get", params={"video_id": vid_id})
-        status = resp["data"]["status"]
-        print(f"  [HeyGen] status: {status}", flush=True)
-        if status == "completed":
-            urllib.request.urlretrieve(resp["data"]["video_url"], str(out_path))
-            print(f"  [HeyGen] saved → {out_path}", flush=True)
-            return
-        if status == "failed":
-            raise RuntimeError(f"HeyGen failed: {resp['data'].get('error')}")
-        time.sleep(20)
-    raise RuntimeError(f"HeyGen timeout for {vid_id}")
-
-# ── Runway API ─────────────────────────────────────────────────────────────────
-def rw_headers():
-    return {
-        "Authorization":    f"Bearer {RUNWAY_API_KEY}",
-        "X-Runway-Version": "2024-11-06",
-        "Content-Type":     "application/json",
-        "Accept":           "application/json",
-    }
-
-def rw_post(endpoint, data):
-    req = urllib.request.Request(
-        RUNWAY_BASE + endpoint,
-        data=json.dumps(data).encode(),
-        headers=rw_headers(), method="POST",
+# ── Hedra API ──────────────────────────────────────────────────────────────────
+def hedra_req(method, path, body=None):
+    data = json.dumps(body).encode() if body else None
+    req  = urllib.request.Request(
+        HEDRA_BASE + path, data=data, method=method,
+        headers={"x-api-key": HEDRA_API_KEY, "Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Runway POST {endpoint} → {e.code}: {e.read().decode()}")
+        raise RuntimeError(f"Hedra {method} {path} → {e.code}: {e.read().decode()}")
 
-def rw_get(endpoint):
-    req = urllib.request.Request(RUNWAY_BASE + endpoint, headers=rw_headers(), method="GET")
+def hedra_get_model_id():
+    models = hedra_req("GET", "/models")
+    if not models:
+        raise RuntimeError("No Hedra models returned")
+    return models[0]["id"]
+
+def hedra_get_voice_id():
+    voices = hedra_req("GET", "/voices")
+    # prefer an English female voice
+    for v in voices:
+        labels = v.get("asset", {}).get("labels", {})
+        if labels.get("gender") == "female" and "en" in labels.get("accent", "en"):
+            return v["id"]
+    return voices[0]["id"]
+
+def hedra_upload_avatar(image_path):
+    """Create an image asset on Hedra and upload the file. Returns asset_id."""
+    asset_id = hedra_req("POST", "/assets", {"name": "avatar.jpg", "type": "image"})["id"]
+    with open(image_path, "rb") as f:
+        img_data = f.read()
+    boundary = "----campusclipboundary"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="avatar.jpg"\r\n'
+        f"Content-Type: image/jpeg\r\n\r\n"
+    ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        HEDRA_BASE + f"/assets/{asset_id}/upload",
+        data=body,
+        headers={
+            "x-api-key":    HEDRA_API_KEY,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    urllib.request.urlopen(req, timeout=60)
+    return asset_id
+
+def hedra_submit(script, model_id, voice_id, image_asset_id):
+    resp = hedra_req("POST", "/generations", {
+        "type":             "video",
+        "ai_model_id":      model_id,
+        "start_keyframe_id": image_asset_id,
+        "generated_video_inputs": {
+            "text_prompt":  "natural confident speaking, slight head movement",
+            "resolution":   "720p",
+            "aspect_ratio": "9:16",
+        },
+        "audio_generation": {
+            "type":     "text_to_speech",
+            "voice_id": voice_id,
+            "text":     script,
+        },
+    })
+    gen_id = resp["id"]
+    print(f"  [Hedra] queued generation_id={gen_id}", flush=True)
+    return gen_id
+
+def hedra_wait(gen_id, out_path, timeout=900):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = hedra_req("GET", f"/generations/{gen_id}/status")
+        status = resp.get("status", "")
+        print(f"  [Hedra] status: {status}", flush=True)
+        if status == "complete":
+            url = resp["download_url"]
+            urllib.request.urlretrieve(url, str(out_path))
+            print(f"  [Hedra] saved → {out_path}", flush=True)
+            return
+        if status == "error":
+            raise RuntimeError(f"Hedra error: {resp.get('error_message')}")
+        time.sleep(10)
+    raise RuntimeError(f"Hedra timeout for {gen_id}")
+
+# ── Kling via PiAPI ────────────────────────────────────────────────────────────
+def piapi_req(method, path, body=None):
+    data = json.dumps(body).encode() if body else None
+    req  = urllib.request.Request(
+        PIAPI_BASE + path, data=data, method=method,
+        headers={"x-api-key": PIAPI_KEY, "Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Runway GET {endpoint} → {e.code}: {e.read().decode()}")
+        raise RuntimeError(f"PiAPI {method} {path} → {e.code}: {e.read().decode()}")
 
-def runway_generate_clip(prompt, out_path, duration=5, timeout=600):
-    """Submit Runway text-to-video, poll until done, download to out_path."""
-    print(f"  [Runway] submitting clip...", flush=True)
-    print(f"  [Runway] prompt: {prompt[:90]}", flush=True)
-    resp = rw_post("/v1/text_to_video", {
-        "promptText": prompt,
-        "model":      "gen3a_turbo",
-        "duration":   duration,
-        "ratio":      "720:1280",
-        "watermark":  False,
+def kling_generate_clip(prompt, out_path, duration=5, timeout=600):
+    print(f"  [Kling] submitting clip...", flush=True)
+    print(f"  [Kling] prompt: {prompt[:90]}", flush=True)
+    resp = piapi_req("POST", "/api/v1/task", {
+        "model":     "kling",
+        "task_type": "video_generation",
+        "input": {
+            "prompt":          prompt,
+            "negative_prompt": "blurry, low quality, text overlay, logos, watermark",
+            "duration":        duration,
+            "aspect_ratio":    "9:16",
+            "mode":            "std",
+            "version":         "1.6",
+        },
     })
-    task_id = resp.get("id") or resp.get("task_id")
-    if not task_id:
-        raise RuntimeError(f"No task ID in Runway response: {resp}")
-    print(f"  [Runway] task_id={task_id}", flush=True)
+    task_id = resp["data"]["task_id"]
+    print(f"  [Kling] task_id={task_id}", flush=True)
 
     deadline = time.time() + timeout
     while time.time() < deadline:
-        s = rw_get(f"/v1/tasks/{task_id}")
-        status = s.get("status", "")
-        print(f"  [Runway] status: {status}", flush=True)
-        if status == "SUCCEEDED":
-            url = (s.get("output") or [""])[0]
-            if not url:
-                raise RuntimeError("SUCCEEDED but no output URL")
+        r      = piapi_req("GET", f"/api/v1/task/{task_id}")
+        status = r["data"]["status"]
+        print(f"  [Kling] status: {status}", flush=True)
+        if status == "completed":
+            url = r["data"]["output"]["works"][0]["video"]["resource_without_watermark"]
             urllib.request.urlretrieve(url, str(out_path))
-            print(f"  [Runway] saved → {out_path}", flush=True)
+            print(f"  [Kling] saved → {out_path}", flush=True)
             return
-        if status in ("FAILED", "CANCELLED"):
-            raise RuntimeError(
-                f"Runway task {status}: {s.get('failure', s.get('error', ''))}"
-            )
+        if status == "failed":
+            raise RuntimeError(f"Kling failed: {r['data'].get('error')}")
         time.sleep(15)
-    raise RuntimeError(f"Runway timeout for task {task_id}")
+    raise RuntimeError(f"Kling timeout for task {task_id}")
 
 # ── ffmpeg compositing ─────────────────────────────────────────────────────────
-# Phone mockup dimensions and position (bottom-right, 1080x1920 frame)
-PH_W, PH_H = 300, 600
-PH_X, PH_Y = 760, 1280
+# Phone mockup — positioned in the bottom-right of the avatar section
+PH_W, PH_H = 280, 560
+PH_X, PH_Y = 780, 1330
 BORDER      = 10
 
+# Frame split: top 55% = Kling B-roll, bottom 45% = Hedra avatar
+BROLL_H  = 1056   # 1920 * 0.55
+AVATAR_H = 864    # 1920 * 0.45
+
 def get_screen_scaled(screen_name):
-    """Download app screenshot and scale it to fit the phone's inner area."""
     src = TMP_DIR / f"screen_{screen_name}.jpg"
     dst = TMP_DIR / f"screen_{screen_name}_scaled.png"
     if not dst.exists():
         if not src.exists():
             urllib.request.urlretrieve(SCREENS[screen_name], str(src))
-            print(f"  [assets] downloaded {screen_name} screenshot", flush=True)
         inner_w = PH_W - BORDER * 2
         inner_h = PH_H - BORDER * 2
         subprocess.run([
@@ -197,51 +215,47 @@ def get_screen_scaled(screen_name):
         ], capture_output=True, check=True)
     return dst
 
-def composite_scene(runway_clip, heygen_clip, screen_name, out):
+def composite_scene(kling_clip, hedra_clip, screen_name, out):
     """
-    Composite three layers into one scene clip:
-      [0] Runway B-roll   → full-screen background (loops to fill avatar duration)
-      [1] HeyGen avatar   → chroma-keyed (green removed) and overlaid on background
-      [2] App screenshot  → composited in a white phone bezel, bottom-right corner
-    Audio comes from the HeyGen clip (the voiceover).
+    [0] Kling B-roll  → top BROLL_H  pixels (loops to match avatar duration)
+    [1] Hedra avatar  → bottom AVATAR_H pixels (face/shoulders crop from top)
+    [2] App screenshot → phone mockup bottom-right of avatar section
+    Audio from Hedra clip.
     """
     screen_scaled = get_screen_scaled(screen_name)
 
     fc = (
-        # Runway: scale to 1080x1920, darken slightly so avatar pops
-        f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-        f"eq=brightness=-0.05:saturation=1.2[bg];"
+        # Kling: scale to 1080 x BROLL_H
+        f"[0:v]scale=1080:{BROLL_H}:force_original_aspect_ratio=decrease,"
+        f"pad=1080:{BROLL_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[broll];"
 
-        # HeyGen: scale to 1080x1920, chroma-key the green screen
+        # Hedra: scale to 1080x1920 then crop the top AVATAR_H px (face area)
         f"[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-        f"chromakey=green:0.3:0.05,format=yuva420p[avatar];"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,crop=1080:{AVATAR_H}:0:0,setsar=1[face];"
 
-        # Overlay avatar on B-roll background
-        f"[bg][avatar]overlay=0:0:format=auto[base];"
+        # Stack B-roll (top) + avatar (bottom)
+        f"[broll][face]vstack=inputs=2[stacked];"
 
         # White phone bezel
-        f"[base]drawbox="
+        f"[stacked]drawbox="
         f"x={PH_X - BORDER}:y={PH_Y - BORDER}:w={PH_W}:h={PH_H}:"
         f"color=white:t=fill[boxed];"
 
-        # App screenshot inside bezel
+        # App screenshot overlay
         f"[boxed][2:v]overlay=x={PH_X}:y={PH_Y}[out]"
     )
 
     cmd = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", str(runway_clip),    # [0] B-roll, looped
-        "-i", str(heygen_clip),                           # [1] avatar + audio
-        "-loop", "1", "-i", str(screen_scaled),          # [2] screenshot
+        "-stream_loop", "-1", "-i", str(kling_clip),   # [0] B-roll, looped
+        "-i", str(hedra_clip),                          # [1] avatar + audio
+        "-loop", "1", "-i", str(screen_scaled),         # [2] screenshot
         "-filter_complex", fc,
         "-map", "[out]",
         "-map", "1:a?",
         "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-ar", "44100",
-        "-r", "24",
-        "-shortest",
+        "-r", "24", "-shortest",
         str(out),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
@@ -251,11 +265,8 @@ def composite_scene(runway_clip, heygen_clip, screen_name, out):
     print(f"  [ffmpeg] composited → {out}", flush=True)
 
 def concat_clips(paths, out):
-    """Concatenate all composited scene clips into the final ad."""
     list_file = TMP_DIR / "concat.txt"
-    list_file.write_text(
-        "\n".join(f"file '{Path(p).resolve()}'" for p in paths)
-    )
+    list_file.write_text("\n".join(f"file '{Path(p).resolve()}'" for p in paths))
     r = subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(list_file),
@@ -286,9 +297,9 @@ ADS = [
         "scenes": [
             {
                 "script": "You are wasting hours every week on this.",
-                "runway": (
+                "kling": (
                     f"University student frantically switching between apps on laptop and phone, "
-                    f"stressed, overwhelmed expression, multiple browser tabs open, dorm room, {STYLE}"
+                    f"stressed overwhelmed expression, multiple browser tabs, dorm room, {STYLE}"
                 ),
                 "screen": "dashboard",
             },
@@ -296,10 +307,10 @@ ADS = [
                 "script": (
                     "Managing your classes, clubs, and campus life across five different apps — "
                     "manually entering everything yourself — is eating your time. "
-                    "Every syllabus, every deadline, every club meeting — typed in by hand."
+                    "Every syllabus, every deadline, every club meeting. Typed in by hand."
                 ),
-                "runway": (
-                    f"Close-up of student's hands slowly typing a class schedule into Google Calendar, "
+                "kling": (
+                    f"Close-up of student's hands slowly typing schedule into Google Calendar, "
                     f"frustrated expression, switching between PDF syllabus and browser, late night, {STYLE}"
                 ),
                 "screen": "calendar",
@@ -310,15 +321,15 @@ ADS = [
                     "Your entire calendar populates in seconds. "
                     "Classes, clubs, events — one place."
                 ),
-                "runway": (
+                "kling": (
                     f"Student's face going from stressed to genuinely relieved and happy, "
-                    f"looking at phone, warm light, relaxed shoulders, {STYLE}"
+                    f"looking at phone, warm light, relaxed posture, {STYLE}"
                 ),
                 "screen": "calendar",
             },
             {
                 "script": "CampusClip. Coming to Western this August. Link in bio.",
-                "runway": (
+                "kling": (
                     f"Beautiful {CAMPUS}, autumn leaves, students walking confidently, "
                     f"golden hour, cinematic wide shot, {STYLE}"
                 ),
@@ -332,9 +343,9 @@ ADS = [
         "scenes": [
             {
                 "script": "This takes three hours. This takes ten seconds.",
-                "runway": (
+                "kling": (
                     f"Two university students side by side — one frustrated at laptop typing slowly, "
-                    f"one relaxed holding phone smiling, contrasting expressions, campus library, {STYLE}"
+                    f"one relaxed holding phone smiling, contrasting, campus library, {STYLE}"
                 ),
                 "screen": "class",
             },
@@ -343,9 +354,9 @@ ADS = [
                     "Upload your syllabus, and CampusClip automatically builds your entire "
                     "academic schedule for you. No more copy-paste. No more missing deadlines."
                 ),
-                "runway": (
-                    f"Student uploading a document on phone, then looking amazed as calendar fills up, "
-                    f"satisfying reveal moment, bright study space, {STYLE}"
+                "kling": (
+                    f"Student uploading a document on phone, then looking amazed as information "
+                    f"fills the screen, satisfying reveal, bright study space, {STYLE}"
                 ),
                 "screen": "calendar",
             },
@@ -354,7 +365,7 @@ ADS = [
                     "Your academics, your clubs, your campus events, your social feed — "
                     "all in one app."
                 ),
-                "runway": (
+                "kling": (
                     f"Student casually scrolling phone with a smile, relaxed on campus bench, "
                     f"{CAMPUS}, autumn, everything under control, {STYLE}"
                 ),
@@ -362,7 +373,7 @@ ADS = [
             },
             {
                 "script": "The future of student life at Western. Coming August 2026.",
-                "runway": (
+                "kling": (
                     f"Cinematic drone shot over {CAMPUS}, golden afternoon light, "
                     f"students thriving, autumn colours, inspiring, {STYLE}"
                 ),
@@ -376,9 +387,9 @@ ADS = [
         "scenes": [
             {
                 "script": "What if one app ran your entire university life?",
-                "runway": (
+                "kling": (
                     f"University student looking at phone thoughtfully, curious expression, "
-                    f"then face lighting up, {CAMPUS} background, {STYLE}"
+                    f"face lighting up, {CAMPUS} background, {STYLE}"
                 ),
                 "screen": "dashboard",
             },
@@ -387,7 +398,7 @@ ADS = [
                     "Your class schedule — auto-built from your syllabus. "
                     "Your assignments and deadlines — tracked automatically."
                 ),
-                "runway": (
+                "kling": (
                     f"Students in a lecture hall, organized and focused, professor at front, "
                     f"warm academic atmosphere, Western University, {STYLE}"
                 ),
@@ -398,7 +409,7 @@ ADS = [
                     "Your clubs and campus events all in one feed. "
                     "And your classmates — connected in one place."
                 ),
-                "runway": (
+                "kling": (
                     f"Students at a vibrant campus club fair, energetic, diverse groups, "
                     f"welcoming, {CAMPUS} outdoor space, autumn, {STYLE}"
                 ),
@@ -409,128 +420,11 @@ ADS = [
                     "One app. Your whole campus life. "
                     "CampusClip — launching at Western this August."
                 ),
-                "runway": (
+                "kling": (
                     f"Student relaxed on campus grass, laptop open, phone in hand, "
-                    f"completely at ease, {CAMPUS} golden hour behind them, {STYLE}"
+                    f"completely at ease, {CAMPUS} golden hour, {STYLE}"
                 ),
                 "screen": "feed",
-            },
-        ],
-    },
-    # ── Legacy ads (kept for reference) ──────────────────────────────────────
-    {
-        "name": "aa01_grade_panic",
-        "scenes": [
-            {
-                "script": (
-                    "If you're at Western and still calculating your grade "
-                    "in a spreadsheet — you are wasting so much time."
-                ),
-                "runway": (
-                    f"University student stressed at laptop late at night, "
-                    f"scattered notes and textbooks, dorm room blue glow, {STYLE}"
-                ),
-                "screen": "dashboard",
-            },
-            {
-                "script": (
-                    "CampusClip tracks every assignment, every weight, every deadline. "
-                    "Your real GPA — updated automatically."
-                ),
-                "runway": (
-                    f"Close-up of student's face changing from anxious to relieved, "
-                    f"looking at phone, warm light, {STYLE}"
-                ),
-                "screen": "class",
-            },
-            {
-                "script": (
-                    "Free for Western students. Download coming August 2026. "
-                    "Follow campusclipapp."
-                ),
-                "runway": (
-                    f"Student walking confidently across {CAMPUS}, "
-                    f"autumn morning golden light, happy expression, {STYLE}"
-                ),
-                "screen": "dashboard",
-            },
-        ],
-    },
-    {
-        "name": "aa02_campus_life",
-        "scenes": [
-            {
-                "script": (
-                    "There is so much happening at Western, "
-                    "and it's all scattered — Instagram, GroupMe, email from the prof. "
-                    "You miss stuff constantly."
-                ),
-                "runway": (
-                    f"Aerial view of {CAMPUS}, students walking on paths between "
-                    f"buildings, autumn, stunning, {STYLE}"
-                ),
-                "screen": "feed",
-            },
-            {
-                "script": (
-                    "CampusClip puts your classes, your clubs, and all your deadlines "
-                    "in one single feed. If something is happening at Western, "
-                    "it's in the app."
-                ),
-                "runway": (
-                    f"Two university students on campus bench laughing, looking at phones, "
-                    f"{CAMPUS}, {STYLE}"
-                ),
-                "screen": "clubs",
-            },
-            {
-                "script": (
-                    "Free. August 2026. Follow at campusclipapp."
-                ),
-                "runway": (
-                    f"Group of diverse university students at a campus social event, "
-                    f"welcoming, inclusive, {CAMPUS}, {STYLE}"
-                ),
-                "screen": "search",
-            },
-        ],
-    },
-    {
-        "name": "aa03_first_year",
-        "scenes": [
-            {
-                "script": (
-                    "If you're starting at Western in September, "
-                    "download CampusClip before you go."
-                ),
-                "runway": (
-                    f"New university student arriving on campus for the first time, "
-                    f"looking around in awe, {CAMPUS}, September morning, backpack, {STYLE}"
-                ),
-                "screen": "dashboard",
-            },
-            {
-                "script": (
-                    "It tracks your grades automatically, "
-                    "shows you every club on campus, "
-                    "and syncs all your deadlines with your courses."
-                ),
-                "runway": (
-                    f"University student joining a study group in the library, "
-                    f"being welcomed warmly, amber lighting, bookshelves, {STYLE}"
-                ),
-                "screen": "clubs",
-            },
-            {
-                "script": (
-                    "It is the one app I wish I had in first year. "
-                    "Free for Western students. August 2026."
-                ),
-                "runway": (
-                    f"Student walking home at dusk, {CAMPUS} glowing behind them, "
-                    f"confident stride, golden sunset, {STYLE}"
-                ),
-                "screen": "calendar",
             },
         ],
     },
@@ -542,37 +436,53 @@ def generate_ad(ad):
     scenes = ad["scenes"]
     print(f"\n{'='*60}\nGenerating: {name}  ({len(scenes)} scenes)\n{'='*60}", flush=True)
 
-    if not HEYGEN_API_KEY:
-        raise RuntimeError("HEYGEN_API_KEY not set")
-    if not RUNWAY_API_KEY:
-        raise RuntimeError("RUNWAY_API_KEY not set")
+    if not HEDRA_API_KEY:
+        raise RuntimeError("HEDRA_API_KEY not set — get it from hedra.com/api-profile")
+    if not PIAPI_KEY:
+        raise RuntimeError("PIAPI_KEY not set — get it from piapi.ai workspace")
+    if not HEDRA_AVATAR_URL:
+        raise RuntimeError(
+            "HEDRA_AVATAR_URL not set — provide a public URL to a portrait JPG "
+            "(the face used for the avatar)"
+        )
+
+    # One-time setup: download avatar image, upload to Hedra, get model/voice IDs
+    print("\n[Setup] Fetching Hedra model + voice + uploading avatar...", flush=True)
+    model_id  = hedra_get_model_id()
+    voice_id  = hedra_get_voice_id()
+    avatar_img = TMP_DIR / "avatar.jpg"
+    if not avatar_img.exists():
+        urllib.request.urlretrieve(HEDRA_AVATAR_URL, str(avatar_img))
+        print(f"  [Hedra] avatar image saved → {avatar_img}", flush=True)
+    image_asset_id = hedra_upload_avatar(avatar_img)
+    print(f"  [Hedra] model={model_id}  voice={voice_id}  image_asset={image_asset_id}", flush=True)
 
     composited = []
     for i, scene in enumerate(scenes):
         print(f"\n── Scene {i+1}/{len(scenes)} ──", flush=True)
 
-        heygen_clip = TMP_DIR / f"{name}_hg_{i:02d}.mp4"
-        runway_clip = TMP_DIR / f"{name}_rw_{i:02d}.mp4"
-        comp_clip   = TMP_DIR / f"{name}_comp_{i:02d}.mp4"
+        hedra_clip = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
+        kling_clip = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
+        comp_clip  = TMP_DIR / f"{name}_comp_{i:02d}.mp4"
 
-        # Step A: HeyGen — avatar speaking this scene's script
-        if heygen_clip.exists():
-            print(f"  [HeyGen] using cached {heygen_clip.name}", flush=True)
+        # A: Hedra avatar speaking this scene's script
+        if hedra_clip.exists():
+            print(f"  [Hedra] using cached {hedra_clip.name}", flush=True)
         else:
-            vid_id = heygen_submit(scene["script"])
-            heygen_wait(vid_id, heygen_clip)
+            gen_id = hedra_submit(scene["script"], model_id, voice_id, image_asset_id)
+            hedra_wait(gen_id, hedra_clip)
 
-        # Step B: Runway — cinematic B-roll for this scene
-        if runway_clip.exists():
-            print(f"  [Runway] using cached {runway_clip.name}", flush=True)
+        # B: Kling cinematic B-roll for this scene
+        if kling_clip.exists():
+            print(f"  [Kling] using cached {kling_clip.name}", flush=True)
         else:
-            runway_generate_clip(scene["runway"], runway_clip, duration=5)
+            kling_generate_clip(scene["kling"], kling_clip, duration=5)
 
-        # Step C: Composite HeyGen avatar over Runway B-roll + phone mockup
-        composite_scene(runway_clip, heygen_clip, scene["screen"], comp_clip)
+        # C: Composite
+        composite_scene(kling_clip, hedra_clip, scene["screen"], comp_clip)
         composited.append(str(comp_clip))
 
-    # Step D: Concatenate all composited scenes
+    # D: Concatenate all scenes
     final = OUT_DIR / f"{name}.mp4"
     concat_clips(composited, final)
     print(f"\n✓  DONE → {final}", flush=True)
