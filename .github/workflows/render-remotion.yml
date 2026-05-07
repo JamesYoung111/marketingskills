@@ -9,6 +9,9 @@ on:
         default: "LaunchCountdown"
         type: choice
         options:
+          - UGCGradeTracker
+          - UGCTransformation
+          - UGCPeerRec
           - LaunchCountdown
           - LaunchHero
           - StatReveal
