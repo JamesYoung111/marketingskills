@@ -123,7 +123,6 @@ def hedra_submit(script, model_id, voice_id, image_asset_id):
             "aspect_ratio": "9:16",
         },
         "audio_generation": {
-            "type":     "text_to_speech",
             "voice_id": voice_id,
             "text":     script,
         },
