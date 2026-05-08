@@ -231,46 +231,28 @@ def get_screen_scaled(screen_name):
     return dst
 
 def composite_scene(kling_clip, hedra_clip, screen_name, out):
-    """
-    [0] Kling B-roll  → top BROLL_H  pixels (loops to match avatar duration)
-    [1] Hedra avatar  → bottom AVATAR_H pixels (face/shoulders crop from top)
-    [2] App screenshot → phone mockup bottom-right of avatar section
-    Audio from Hedra clip.
-    """
+    """Split-screen: Kling B-roll top 55%, Hedra avatar bottom 45%."""
     screen_scaled = get_screen_scaled(screen_name)
-
     fc = (
-        # Kling: scale to 1080 x BROLL_H
         f"[0:v]scale=1080:{BROLL_H}:force_original_aspect_ratio=decrease,"
         f"pad=1080:{BROLL_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[broll];"
-
-        # Hedra: scale to 1080x1920 then crop the top AVATAR_H px (face area)
         f"[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
         f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,crop=1080:{AVATAR_H}:0:0,setsar=1[face];"
-
-        # Stack B-roll (top) + avatar (bottom)
         f"[broll][face]vstack=inputs=2[stacked];"
-
-        # White phone bezel
         f"[stacked]drawbox="
         f"x={PH_X - BORDER}:y={PH_Y - BORDER}:w={PH_W}:h={PH_H}:"
         f"color=white:t=fill[boxed];"
-
-        # App screenshot overlay
         f"[boxed][2:v]overlay=x={PH_X}:y={PH_Y}[out]"
     )
-
     cmd = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", str(kling_clip),   # [0] B-roll, looped
-        "-i", str(hedra_clip),                          # [1] avatar + audio
-        "-loop", "1", "-i", str(screen_scaled),         # [2] screenshot
+        "-stream_loop", "-1", "-i", str(kling_clip),
+        "-i", str(hedra_clip),
+        "-loop", "1", "-i", str(screen_scaled),
         "-filter_complex", fc,
-        "-map", "[out]",
-        "-map", "1:a?",
+        "-map", "[out]", "-map", "1:a?",
         "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-ar", "44100",
-        "-r", "24", "-shortest",
+        "-c:a", "aac", "-ar", "44100", "-r", "24", "-shortest",
         str(out),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
@@ -278,6 +260,34 @@ def composite_scene(kling_clip, hedra_clip, screen_name, out):
         print(f"  [ffmpeg] stderr:\n{r.stderr[-2000:]}", flush=True)
         raise RuntimeError("composite_scene failed")
     print(f"  [ffmpeg] composited → {out}", flush=True)
+
+def composite_hedra_only(hedra_clip, screen_name, out):
+    """Fallback: Hedra avatar full-screen with phone mockup overlay."""
+    screen_scaled = get_screen_scaled(screen_name)
+    PH_X2, PH_Y2 = 760, 1280   # phone position for full-screen frame
+    fc = (
+        f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+        f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];"
+        f"[bg]drawbox="
+        f"x={PH_X2 - BORDER}:y={PH_Y2 - BORDER}:w={PH_W}:h={PH_H}:"
+        f"color=white:t=fill[boxed];"
+        f"[boxed][1:v]overlay=x={PH_X2}:y={PH_Y2}[out]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(hedra_clip),
+        "-loop", "1", "-i", str(screen_scaled),
+        "-filter_complex", fc,
+        "-map", "[out]", "-map", "0:a?",
+        "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "44100", "-r", "24", "-shortest",
+        str(out),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+    if r.returncode != 0:
+        print(f"  [ffmpeg] stderr:\n{r.stderr[-2000:]}", flush=True)
+        raise RuntimeError("composite_hedra_only failed")
+    print(f"  [ffmpeg] composited (avatar-only) → {out}", flush=True)
 
 def concat_clips(paths, out):
     list_file = TMP_DIR / "concat.txt"
@@ -488,8 +498,11 @@ def generate_ad(ad):
             print(f"  [Hedra] cached {hedra_clip.name}", flush=True)
 
         if not kling_clip.exists():
-            task_id = kling_submit(scene["kling"], duration=5)
-            kling_pending[i] = task_id
+            try:
+                task_id = kling_submit(scene["kling"], duration=5)
+                kling_pending[i] = task_id
+            except Exception as e:
+                print(f"  [Kling] SKIPPED (will use avatar-only): {e}", flush=True)
         else:
             print(f"  [Kling] cached {kling_clip.name}", flush=True)
 
@@ -533,7 +546,8 @@ def generate_ad(ad):
                     print(f"  [Kling] scene {i} done → {out.name}", flush=True)
                     kling_done.add(i)
                 elif status == "failed":
-                    raise RuntimeError(f"Kling failed scene {i}: {r['data'].get('error')}")
+                    print(f"  [Kling] scene {i} failed — will use avatar-only for this scene", flush=True)
+                    kling_done.add(i)  # mark done so we don't keep polling
                 else:
                     print(f"  [Kling] scene {i}: {status}", flush=True)
 
@@ -551,7 +565,11 @@ def generate_ad(ad):
         hedra_clip = TMP_DIR / f"{name}_hedra_{i:02d}.mp4"
         kling_clip = TMP_DIR / f"{name}_kling_{i:02d}.mp4"
         comp_clip  = TMP_DIR / f"{name}_comp_{i:02d}.mp4"
-        composite_scene(kling_clip, hedra_clip, scene["screen"], comp_clip)
+        if kling_clip.exists():
+            composite_scene(kling_clip, hedra_clip, scene["screen"], comp_clip)
+        else:
+            print(f"  [ffmpeg] no B-roll for scene {i} — using avatar full-screen", flush=True)
+            composite_hedra_only(hedra_clip, scene["screen"], comp_clip)
         composited.append(str(comp_clip))
 
     final = OUT_DIR / f"{name}.mp4"
